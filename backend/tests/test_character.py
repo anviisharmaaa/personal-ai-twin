@@ -311,3 +311,32 @@ def test_old_consent_version_must_be_reaccepted(client: TestClient, analyzer: Fa
     assert client.post("/api/v1/consents/ai-processing", json={"version": CONSENT}, headers=h).status_code == 201
     assert client.get("/api/v1/me", headers=h).json()["ai_consent"]["granted"] is True
     assert client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h).status_code == 200
+
+
+def test_ready_reports_character_model_and_warns_about_the_old_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.main import create_app
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "some-model")  # the retired name must NOT enable character analysis
+    monkeypatch.delenv("OPENAI_CHARACTER_MODEL", raising=False)
+    get_settings.cache_clear()
+    body = TestClient(create_app()).get("/ready").json()
+    assert body["configured"]["openai"] is False
+    assert any("OPENAI_CHARACTER_MODEL" in w for w in body["warnings"])
+    assert "sk-test" not in json.dumps(body)
+    monkeypatch.setenv("OPENAI_CHARACTER_MODEL", "gpt-6-luna")
+    get_settings.cache_clear()
+    body = TestClient(create_app()).get("/ready").json()
+    assert body["configured"]["openai"] is True and body["warnings"] == []
+    get_settings.cache_clear()
+
+
+@pytest.mark.anyio
+async def test_provider_error_detail_is_captured_for_operators_but_not_the_user_message() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": {"type": "invalid_request_error", "param": "max_completion_tokens",
+                                                   "message": "Unsupported parameter"}})
+
+    with pytest.raises(AnalysisError) as e:
+        await provider(handler).analyze("hello")
+    assert "max_completion_tokens" in (e.value.detail or "") and "max_completion_tokens" not in e.value.message

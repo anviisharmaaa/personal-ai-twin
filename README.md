@@ -39,7 +39,7 @@ description's current `character_version`; editing the text marks it outdated wi
 failed analysis never overwrites the last good profile.
 
 - Server-side only; the OpenAI key never reaches the browser. Provider boundary: `app/character.py` (`CharacterAnalyzer`).
-- Requires the current consent version (`2026-10-v2`), `OPENAI_API_KEY` and `OPENAI_CHAT_MODEL`.
+- Requires the current consent version (`2026-10-v2`), `OPENAI_API_KEY` and `OPENAI_CHARACTER_MODEL` (separate from any future chat model; the old `OPENAI_CHAT_MODEL` name is ignored).
 - Identical, unchanged descriptions are served from storage (no second model call). One analysis per twin runs at a time
   **per server process** (use a database lock if you ever run several workers). `ANALYSIS_DAILY_LIMIT` and `AI_ENABLED` bound spend,
   but provider-side billing limits are still the real budget guard.
@@ -49,3 +49,6 @@ failed analysis never overwrites the last good profile.
 - Mocked: backend pytest (FakeSupabase + FakeAnalyzer + mocked HTTP for the adapter), Playwright with a mocked API.
 - NOT yet verified live: a real OpenAI call (model id, strict-JSON-schema acceptance, latency, cost), real RLS isolation
   for the new tables, quality of interpretations on representative descriptions.
+
+Live steps (model access, smoke test, UI test, leaked-password protection, two-account RLS check): `docs/LIVE_VERIFICATION.md`.
+Migration history reconciliation: `docs/MIGRATIONS.md`.

@@ -116,11 +116,14 @@ of this person should respond, grounded in the description. "uncertainties" list
 class AnalysisError(Exception):
     """Raised for any failure to produce a valid profile. `code` is safe to show and to store."""
 
-    def __init__(self, code: str, message: str, status_code: int = 502) -> None:
+    def __init__(self, code: str, message: str, status_code: int = 502, detail: str | None = None) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
+        # Provider's own error text, for the operator's smoke-test script only. Never sent to the browser,
+        # never stored, never logged by the API.
+        self.detail = detail
 
 
 @dataclass
@@ -130,6 +133,8 @@ class AnalysisResult:
     input_tokens: int | None
     output_tokens: int | None
     latency_ms: int
+    reasoning_tokens: int | None = None
+    finish_reason: str | None = None
 
 
 class CharacterAnalyzer(Protocol):
@@ -148,6 +153,16 @@ def parse_profile(raw: str) -> CharacterProfile:
         raise AnalysisError(
             "malformed_response", "The AI returned something we couldn't use. Please try again."
         ) from exc
+
+
+def _provider_detail(res: httpx.Response) -> str | None:
+    """Short, key-free summary of an OpenAI error body (type/code/param/message), for operator diagnostics."""
+    try:
+        err = res.json().get("error") or {}
+        parts = [f"{k}={str(err[k])[:200]}" for k in ("type", "code", "param", "message") if err.get(k)]
+        return "; ".join(parts) or None
+    except (ValueError, AttributeError):
+        return None
 
 
 class OpenAIAnalyzer:
@@ -201,12 +216,15 @@ class OpenAIAnalyzer:
                     raise AnalysisError("provider_unreachable", "We couldn't reach the AI service.", 502) from exc
                 continue
             if res.status_code == 429:
-                raise AnalysisError("rate_limited", "The AI service is busy. Please try again in a moment.", 429)
+                raise AnalysisError("rate_limited", "The AI service is busy. Please try again in a moment.", 429,
+                                    _provider_detail(res))
             if res.status_code in (401, 403):
-                raise AnalysisError("provider_auth", "The AI service rejected our credentials.", 502)
+                raise AnalysisError("provider_auth", "The AI service rejected our credentials.", 502,
+                                    _provider_detail(res))
             if res.status_code == 404 or res.status_code == 400:
                 # Bad model id or unsupported parameter. Not retryable; do not echo provider text (may be verbose).
-                raise AnalysisError("provider_rejected", "The configured AI model rejected the request.", 502)
+                raise AnalysisError("provider_rejected", "The configured AI model rejected the request.", 502,
+                                    _provider_detail(res))
             if res.status_code >= 500:
                 if attempt == 2:
                     raise AnalysisError("provider_error", "The AI service had a problem. Please try again.", 502)
@@ -219,7 +237,8 @@ class OpenAIAnalyzer:
         try:
             choice = data["choices"][0]
             if choice.get("finish_reason") == "length":
-                raise AnalysisError("truncated", "The AI's answer was cut off. Please try again.", 502)
+                raise AnalysisError("truncated", "The AI's answer was cut off. Please try again.", 502,
+                                    f"usage={data.get('usage')}")
             content = choice["message"].get("content")
             if not isinstance(content, str) or choice["message"].get("refusal"):
                 raise AnalysisError("refused", "The AI declined to analyse this description.", 502)
@@ -233,4 +252,6 @@ class OpenAIAnalyzer:
             input_tokens=usage.get("prompt_tokens"),
             output_tokens=usage.get("completion_tokens"),
             latency_ms=int((time.monotonic() - started) * 1000),
+            reasoning_tokens=(usage.get("completion_tokens_details") or {}).get("reasoning_tokens"),
+            finish_reason=choice.get("finish_reason"),
         )

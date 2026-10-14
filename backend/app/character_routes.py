@@ -22,7 +22,7 @@ _in_flight: set[str] = set()
 
 def get_analyzer() -> CharacterAnalyzer:
     s = get_settings()
-    return OpenAIAnalyzer(s.openai_api_key, s.openai_chat_model, s.analysis_timeout_seconds,
+    return OpenAIAnalyzer(s.openai_api_key, s.openai_character_model, s.analysis_timeout_seconds,
                           s.analysis_max_output_tokens)
 
 
@@ -142,7 +142,7 @@ async def analyze_character(
         try:
             result = await analyzer.analyze(description)
         except AnalysisError as exc:
-            await _record_usage(rest, user, False, settings.openai_chat_model or None, None, None, None)
+            await _record_usage(rest, user, False, settings.openai_character_model or None, None, None, None)
             await _record_failure(rest, user, twin["id"], exc.code, row)
             raise _err(exc.code, exc.message, exc.status_code) from exc
         await _record_usage(rest, user, True, result.model, result.input_tokens, result.output_tokens,

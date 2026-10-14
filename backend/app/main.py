@@ -36,11 +36,15 @@ def create_app() -> FastAPI:
     @app.get("/ready")
     def ready() -> dict[str, object]:
         # Reports configuration presence only; never values.
+        warnings: list[str] = []
+        if settings.openai_chat_model and not settings.openai_character_model:
+            warnings.append("OPENAI_CHAT_MODEL is not used for character analysis. Set OPENAI_CHARACTER_MODEL.")
         return {
             "status": "ok",
+            "warnings": warnings,
             "configured": {
                 "supabase": bool(settings.supabase_url and settings.supabase_publishable_key),
-                "openai": bool(settings.openai_api_key and settings.openai_chat_model),
+                "openai": bool(settings.openai_api_key and settings.openai_character_model),
             },
         }
 

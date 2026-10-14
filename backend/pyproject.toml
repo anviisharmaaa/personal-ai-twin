@@ -13,3 +13,6 @@ pythonpath = ["."]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends", "fastapi.File", "fastapi.Form", "fastapi.Header"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["E501"]  # operator scripts print long diagnostic lines

@@ -15,7 +15,11 @@ class Settings(BaseSettings):
     # Reserved for later stages (workers, deletion). Never used for user-facing reads.
     supabase_service_role_key: str = ""
     openai_api_key: str = ""
-    # No default on purpose: the model is chosen explicitly by the operator and never switched silently.
+    # Model used ONLY for character analysis. No default in code: the operator chooses it explicitly
+    # (see .env.example) and nothing here ever switches models on its own.
+    openai_character_model: str = ""
+    # Deprecated name, read only so we can warn about it. It is never used for any call and never
+    # falls back into the character model, so a future chat model setting cannot leak into this feature.
     openai_chat_model: str = ""
     # Kill switch for every external AI call (budget protection / incident response).
     ai_enabled: bool = True
