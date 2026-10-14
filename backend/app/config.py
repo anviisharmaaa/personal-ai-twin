@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +24,9 @@ class Settings(BaseSettings):
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     # "guided_json" (NIM's documented structured output) or "prompt" (schema in prompt, strict validation after).
     nvidia_json_mode: str = "guided_json"
+    # Output budget for NVIDIA only (the shared ANALYSIS_MAX_OUTPUT_TOKENS still governs OpenAI). Hard-bounded so it
+    # cannot be raised enough to hide a runaway-reasoning problem: a full profile needs well under 4096 tokens.
+    nvidia_max_output_tokens: int = Field(default=4096, ge=512, le=8192)
     openai_api_key: str = ""
     # Model used ONLY for character analysis. No default in code: the operator chooses it explicitly
     # (see .env.example) and nothing here ever switches models on its own.

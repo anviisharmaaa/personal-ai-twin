@@ -147,7 +147,10 @@ def fmt_usage(r: AnalysisResult) -> str:
     c = cost_usd(r.input_tokens, r.output_tokens)
     base = (f"latency={r.latency_ms}ms in={r.input_tokens} out={r.output_tokens} reasoning={r.reasoning_tokens} "
             f"finish={r.finish_reason}")
-    return base + (f" est_cost=${c:.5f}" if c is not None else " cost=free-tier (no per-token price)")
+    note = ""
+    if PROVIDER == "nvidia" and r.reasoning_tokens:
+        note = f"  WARNING: reasoning_tokens={r.reasoning_tokens} although reasoning was disabled in the request"
+    return base + (f" est_cost=${c:.5f}" if c is not None else " cost=free-tier (no per-token price)") + note
 
 
 async def access_check(s: Settings) -> tuple[int, str]:

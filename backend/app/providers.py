@@ -92,6 +92,12 @@ class NvidiaAnalyzer(OpenAIAnalyzer):
     `nvext.guided_json`. Because hosted endpoints differ, `json_mode="prompt"` is the safest equivalent:
     the schema goes in the prompt and the reply is validated strictly (invalid replies are rejected,
     never repaired). `max_tokens` is the parameter NVIDIA's docs show.
+
+    Reasoning is switched OFF for this task. Nemotron 3 Super reasons by default, and on a first live run its
+    reasoning consumed the whole token budget, so no profile came back (finish_reason=length). NVIDIA's model
+    card documents `chat_template_kwargs: {"enable_thinking": false}` for this (it does not document
+    `reasoning_effort`, so that field is not sent). A character interpretation is extraction from given text,
+    which does not need a reasoning trace. Truncation is still detected and reported, never parsed.
     """
 
     PROVIDER = "nvidia"
@@ -112,6 +118,7 @@ class NvidiaAnalyzer(OpenAIAnalyzer):
             "max_tokens": self._max_out,
             "temperature": 0.2,
             "stream": False,
+            "chat_template_kwargs": {"enable_thinking": False},
         }
         if self._mode == "guided_json":
             payload["nvext"] = {"guided_json": OUTPUT_JSON_SCHEMA}
@@ -154,7 +161,7 @@ def build_analyzer(s: Settings) -> Any:
     p = active_provider(s)
     if p == "nvidia":
         return NvidiaAnalyzer(s.nvidia_api_key, s.nvidia_character_model, s.analysis_timeout_seconds,
-                              s.analysis_max_output_tokens, s.nvidia_base_url, s.nvidia_json_mode)
+                              s.nvidia_max_output_tokens, s.nvidia_base_url, s.nvidia_json_mode)
     if p == "openai":
         return OpenAIAnalyzer(s.openai_api_key, s.openai_character_model, s.analysis_timeout_seconds,
                               s.analysis_max_output_tokens)

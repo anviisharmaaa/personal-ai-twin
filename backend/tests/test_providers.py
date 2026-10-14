@@ -281,3 +281,101 @@ def test_ready_reports_provider_and_warns_when_a_key_has_no_provider(monkeypatch
     body = TestClient(create_app()).get("/ready").json()
     assert body["ai_provider"] == "nvidia" and body["configured"]["ai"] is True and body["warnings"] == []
     get_settings.cache_clear()
+
+
+# ---- reasoning disabled / token budget / truncation (live run showed reasoning eating the whole budget) -------
+
+@pytest.mark.anyio
+async def test_nvidia_request_disables_reasoning_with_the_documented_field_only() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(req.content)
+        return ok_response(json.dumps(GOOD), {"prompt_tokens": 400, "completion_tokens": 300})
+
+    s = settings(ai_provider="nvidia", nvidia_api_key="k", nvidia_character_model="nvidia/nemotron-3-super-120b-a12b",
+                 nvidia_json_mode="prompt")
+    a = build_analyzer(s)
+    a._transport = httpx.MockTransport(handler)  # type: ignore[attr-defined]
+    r = await a.analyze(TEXT)
+    body = seen["body"]
+    assert isinstance(body, dict)
+    assert body["chat_template_kwargs"] == {"enable_thinking": False}
+    assert "reasoning_effort" not in body  # not documented for this model, so never sent
+    assert body["max_tokens"] == 4096 and "max_completion_tokens" not in body
+    assert body["model"] == "nvidia/nemotron-3-super-120b-a12b"
+    assert "nvext" not in body and "JSON Schema" in body["messages"][0]["content"]  # prompt mode unchanged
+    assert r.profile.summary.startswith("Warm") and r.output_tokens == 300 and r.finish_reason == "stop"
+
+
+@pytest.mark.anyio
+async def test_reasoning_is_disabled_in_guided_json_mode_too() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(req.content)
+        return ok_response(json.dumps(GOOD))
+
+    await nvidia(handler, "guided_json").analyze(TEXT)
+    assert isinstance(seen["body"], dict) and seen["body"]["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_nvidia_token_budget_default_and_hard_bounds() -> None:
+    assert settings().nvidia_max_output_tokens == 4096
+    assert settings(nvidia_max_output_tokens="6000").nvidia_max_output_tokens == 6000
+    for bad in ("100", "100000"):  # too small to hold a profile / large enough to hide a reasoning problem
+        with pytest.raises(ValueError):
+            settings(nvidia_max_output_tokens=bad)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("message", [{"content": None}, {"content": ""}, {"content": '{"summary": "Wa'}])
+async def test_genuine_truncation_fails_safely_whatever_the_partial_content(message: dict[str, object]) -> None:
+    """Includes the exact live failure: completion_tokens == reasoning_tokens == budget and no final answer."""
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={"choices": [{"finish_reason": "length", "message": message}],
+                                         "usage": {"prompt_tokens": 500, "completion_tokens": 3000,
+                                                   "completion_tokens_details": {"reasoning_tokens": 3000}}})
+
+    with pytest.raises(AnalysisError) as e:
+        await nvidia(handler).analyze(TEXT)
+    assert e.value.code == "truncated" and e.value.status_code == 502
+    assert calls == 1  # no automatic retry of a call that already used its whole budget
+    assert TEXT not in e.value.message and "nvapi" not in (e.value.detail or "")
+
+
+@pytest.mark.anyio
+async def test_reasoning_tokens_are_reported_when_the_provider_returns_them() -> None:
+    usage = {"prompt_tokens": 10, "completion_tokens": 50, "completion_tokens_details": {"reasoning_tokens": 7}}
+    r = await nvidia(lambda _: ok_response(json.dumps(GOOD), usage)).analyze(TEXT)
+    assert r.reasoning_tokens == 7  # lets the smoke test warn if the endpoint ignored enable_thinking=false
+
+
+def test_truncated_analysis_keeps_the_last_good_profile_and_the_users_text(client: TestClient) -> None:
+    good = nvidia(lambda _: ok_response(json.dumps(GOOD)))
+    cut = nvidia(lambda _: httpx.Response(200, json={"choices": [{"finish_reason": "length",
+                                                                   "message": {"content": None}}]}))
+    _in_flight.clear()
+    get_settings.cache_clear()
+    h = start(client)
+    app.dependency_overrides[get_analyzer] = lambda: good
+    assert client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h).status_code == 200
+    before = client.get("/api/v1/me", headers=h).json()["character"]["profile"]
+    assert before["summary"].startswith("Warm")
+
+    edited = TEXT + " She also hates being rushed."
+    client.put("/api/v1/twin/character", json={"description": edited, "base_version": 1}, headers=h)
+    app.dependency_overrides[get_analyzer] = lambda: cut
+    r = client.post("/api/v1/twin/character/analyze", json={"version": 2}, headers=h)
+    assert r.status_code == 502 and r.json()["detail"]["code"] == "truncated"
+
+    me = client.get("/api/v1/me", headers=h).json()
+    assert me["twin"]["character_description"] == edited            # the user's words are untouched
+    assert me["character"]["profile"] == before                     # last good profile not overwritten
+    assert me["character"]["status"] == "outdated"                  # and honestly marked as made from older text
+    assert me["character"]["failure"] == "truncated"
+    get_settings.cache_clear()

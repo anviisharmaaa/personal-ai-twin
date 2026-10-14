@@ -20,6 +20,8 @@ NVIDIA_API_KEY=<your key from build.nvidia.com, only in this file>
 NVIDIA_CHARACTER_MODEL=nvidia/nemotron-3-super-120b-a12b
 ```
 Get a key: sign in at <https://build.nvidia.com>, open the model page and use "Get API Key". Keys start `nvapi-`.
+The request disables Nemotron's reasoning (`chat_template_kwargs.enable_thinking=false`) and allows 4096 output tokens
+(`NVIDIA_MAX_OUTPUT_TOKENS`, bounded 512 to 8192). If a run still shows `reasoning_tokens` above 0 the smoke test prints a warning.
 Optional: `NVIDIA_JSON_MODE=prompt` if the endpoint rejects `nvext.guided_json` (the smoke test will print NVIDIA's reason).
 
 **Sample mode (no network, no key, no cost):** `AI_PROVIDER=mock`. Results are fixed examples and are labelled
