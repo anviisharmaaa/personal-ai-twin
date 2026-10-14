@@ -5,7 +5,7 @@ import { Button, Chip } from "../components/ui";
 import { useAuth } from "../auth/AuthProvider";
 
 const FEATURES: { title: string; body: string; status: "Available" | "Coming next" | "Planned" }[] = [
-  { title: "Your twin’s identity & personality", body: "Name it, describe it, and answer a few questions about how you communicate.", status: "Available" },
+  { title: "Your twin’s identity & character", body: "Name your twin, then describe their character in your own words. Madhuora reads it and shows you its interpretation.", status: "Available" },
   { title: "Portrait", body: "Add a still portrait, stored privately. Framing, backdrop and lighting only — never altered faces.", status: "Available" },
   { title: "Text conversations", body: "Talk with your twin; replies stream in as they’re written.", status: "Coming next" },
   { title: "Memories you approve", body: "Stories and facts your twin can draw on — only after you say yes.", status: "Coming next" },

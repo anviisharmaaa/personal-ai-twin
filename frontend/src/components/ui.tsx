@@ -55,8 +55,8 @@ export const TextField = forwardRef<HTMLInputElement, FieldBase & InputHTMLAttri
   },
 );
 
-export const TextArea = forwardRef<HTMLTextAreaElement, FieldBase & TextareaHTMLAttributes<HTMLTextAreaElement>>(
-  function TextArea({ label, hint, error, className = "", ...rest }, ref) {
+export const TextArea = forwardRef<HTMLTextAreaElement, FieldBase & { fieldClassName?: string } & TextareaHTMLAttributes<HTMLTextAreaElement>>(
+  function TextArea({ label, hint, error, className = "", fieldClassName = "min-h-28", ...rest }, ref) {
     const id = useId();
     return (
       <div className={className}>
@@ -65,11 +65,12 @@ export const TextArea = forwardRef<HTMLTextAreaElement, FieldBase & TextareaHTML
           id={id}
           ref={ref}
           aria-invalid={error ? true : undefined}
-          className="min-h-28 w-full rounded-[10px] border border-border bg-surface-2 px-3 py-2 text-sm placeholder:text-muted/70 focus:border-ring"
+          aria-describedby={[error && `${id}-e`, hint && `${id}-h`].filter(Boolean).join(" ") || undefined}
+          className={`w-full rounded-[10px] border border-border bg-surface-2 px-3 py-2 text-sm placeholder:text-muted/70 focus:border-ring ${fieldClassName}`}
           {...rest}
         />
-        {error ? <p role="alert" className="mt-1.5 text-sm text-danger">{error}</p>
-          : hint ? <p className="mt-1.5 text-sm text-muted">{hint}</p> : null}
+        {error && <p id={`${id}-e`} role="alert" className="mt-1.5 text-sm text-danger">{error}</p>}
+        {hint && <p id={`${id}-h`} className="mt-1.5 text-sm text-muted">{hint}</p>}
       </div>
     );
   },

@@ -15,25 +15,61 @@ export const SESSION = {
   user: { id: "u1", aud: "authenticated", role: "authenticated", email: "anvi@example.test", app_metadata: {}, user_metadata: {}, created_at: "2026-10-14T00:00:00Z" },
 };
 
-export const QUESTIONS = { questions: [
-  { id: "tone", prompt: "How should your twin generally sound?", multi: false, options: ["warm", "playful", "calm", "direct", "formal"] },
-  { id: "values", prompt: "Which values matter most to you? (up to 3)", multi: true, max: 3, options: ["family", "honesty", "curiosity", "kindness"] },
-] };
+/** Test data only. This is a hand-written stand-in for what a model might return; it is never real AI output. */
+export const MOCK_PROFILE = {
+  summary: "Warm and teasing with close friends, careful with people she has just met.",
+  core_traits: [{ text: "Shows care through actions rather than words", basis: "stated" }],
+  speaking_style: [{ text: "Plain and direct", basis: "inferred" }],
+  typical_expressions: ["Eat something first."],
+  warmth_and_expressiveness: [], humour_and_playfulness: [{ text: "Teases her closest friends", basis: "stated" }],
+  empathy_and_support: [], directness_and_disagreement: [], values_and_motivations: [], relationships_and_social: [],
+  interests_and_habits: [], communication_preferences: [], boundaries_and_careful_topics: [],
+  context_tendencies: [{ context: "Around strangers", tendency: "Quiet and observant", basis: "context_dependent" }],
+  response_patterns: [], behavioural_guidance: ["Listen first, then give an honest view."],
+  uncertainties: ["How she behaves at work is not described."],
+};
 
 type Twin = Record<string, unknown> | null;
+type Character = { description: string; version: number; profile: object | null; profileVersion: number | null; failure: string | null };
 export type Backend = {
   twin: Twin; steps: string[]; consent: boolean; calls: { method: string; path: string; body?: unknown }[];
   failTwinSave: boolean;
+  character: Character;
+  openaiConfigured: boolean;
+  /** "ok" returns the mock profile; any other value is returned as an error code from the analysis endpoint. */
+  analyze: string;
+  analyzeDelayMs: number;
 };
 
 export function newBackend(init: Partial<Backend> = {}): Backend {
-  return { twin: null, steps: [], consent: false, calls: [], failTwinSave: false, ...init };
+  return {
+    twin: null, steps: [], consent: false, calls: [], failTwinSave: false, openaiConfigured: true, analyze: "ok",
+    analyzeDelayMs: 0, character: { description: "", version: 0, profile: null, profileVersion: null, failure: null },
+    ...init,
+  };
 }
 
+export const DESCRIPTION = "Meera teases her closest friends constantly but goes quiet around people she has just met.";
+
 export const fullTwin = (over: object = {}) => ({
-  id: "t1", name: "Anvi", about: "Curious.", personality: { answers: { tone: "warm" }, submitted_at: "x" },
-  communication: {}, appearance: {}, portrait_path: null, portrait_url: null, portrait_permission_confirmed: false, ...over,
+  id: "t1", name: "Anvi", about: "Curious.", character_description: "", character_version: 0,
+  appearance: {}, portrait_path: null, portrait_url: null, portrait_permission_confirmed: false, ...over,
 });
+
+/** A backend whose twin already has a saved description (version 1), optionally already analysed. */
+export const withCharacter = (analysed = false, over: Partial<Backend> = {}) =>
+  newBackend({
+    consent: true, steps: ["welcome", "identity", "personality"], twin: fullTwin({ character_description: DESCRIPTION, character_version: 1 }),
+    character: { description: DESCRIPTION, version: 1, profile: analysed ? MOCK_PROFILE : null, profileVersion: analysed ? 1 : null, failure: null },
+    ...over,
+  });
+
+const view = (be: Backend) => {
+  const c = be.character;
+  const status = !c.description.trim() ? "empty" : c.profile === null ? "not_analysed" : c.profileVersion === c.version ? "current" : "outdated";
+  return { status, description_version: c.version, min_chars: 40, profile: c.profile, profile_version: c.profile ? c.profileVersion : null,
+    generated_at: c.profile ? "2026-10-14T09:00:00+00:00" : null, failure: c.failure };
+};
 
 export async function mockApp(page: Page, be: Backend, opts: { auth?: boolean; theme?: "light" | "dark"; supabase?: (r: Route) => Promise<void> | void } = {}) {
   const { auth = true, theme = "dark" } = opts;
@@ -58,11 +94,30 @@ export async function mockApp(page: Page, be: Backend, opts: { auth?: boolean; t
 
     if (path === "/api/v1/me") {
       return json({
-        user_id: "u1", profile: { display_name: "Anvi", timezone: "Asia/Calcutta" }, twin: be.twin, completed_steps: be.steps,
-        ai_consent: { granted: be.consent, version: be.consent ? "2026-10-v1" : null, current_version: "2026-10-v1" },
+        user_id: "u1", profile: { display_name: "Anvi", timezone: "Asia/Calcutta" },
+        twin: be.twin ? { ...be.twin, character_description: be.character.description, character_version: be.character.version } : null,
+        character: be.twin ? view(be) : null, completed_steps: be.steps,
+        ai_consent: { granted: be.consent, version: be.consent ? "2026-10-v2" : null, current_version: "2026-10-v2" },
       });
     }
-    if (path === "/api/v1/onboarding/questionnaire") return json(QUESTIONS);
+    if (path === "/ready") return json({ status: "ok", configured: { supabase: true, openai: be.openaiConfigured } });
+    if (path === "/api/v1/twin/character" && req.method() === "PUT") {
+      const b = body as { description: string; base_version: number };
+      if (b.description !== be.character.description) {
+        if (b.base_version !== be.character.version) return json({ detail: { code: "changed_elsewhere", message: "This description changed in another tab or device. Reload to see the latest before editing." } }, 409);
+        be.character = { ...be.character, description: b.description, version: be.character.version + 1 };
+      }
+      return json({ twin: be.twin, character: view(be) });
+    }
+    if (path === "/api/v1/twin/character/analyze") {
+      if (be.analyzeDelayMs) await new Promise((res) => setTimeout(res, be.analyzeDelayMs));
+      if (be.analyze !== "ok") {
+        be.character = { ...be.character, failure: be.analyze };
+        return json({ detail: { code: be.analyze, message: "The AI took too long to respond. Please try again." } }, 504);
+      }
+      be.character = { ...be.character, profile: MOCK_PROFILE, profileVersion: (body as { version: number }).version, failure: null };
+      return json({ character: view(be), cached: false });
+    }
     if (path === "/api/v1/consents/ai-processing") { be.consent = req.method() !== "DELETE"; return req.method() === "DELETE" ? r.fulfill({ status: 204, headers: CORS }) : json({ ok: true }, 201); }
     if (path.startsWith("/api/v1/onboarding/steps/")) {
       const step = path.split("/")[5];
@@ -71,11 +126,7 @@ export async function mockApp(page: Page, be: Backend, opts: { auth?: boolean; t
     }
     if (path === "/api/v1/twin" && req.method() === "PUT") {
       if (be.failTwinSave) return json({ detail: "Data service error. Please try again." }, 502);
-      be.twin = { ...(be.twin ?? fullTwin({ personality: {} })), ...(body as object) };
-      return json(be.twin);
-    }
-    if (path === "/api/v1/twin/personality") {
-      be.twin = { ...(be.twin ?? fullTwin()), personality: { answers: (body as { answers: object }).answers, submitted_at: "now" } };
+      be.twin = { ...(be.twin ?? fullTwin()), ...(body as object) };
       return json(be.twin);
     }
     if (path === "/api/v1/twin/portrait" && req.method() === "POST") {

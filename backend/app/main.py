@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.character_routes import router as character_router
 from app.config import get_settings
 from app.routes import router
 from app.supabase_rest import SupabaseError
@@ -17,6 +18,7 @@ def create_app() -> FastAPI:
         allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
     )
     app.include_router(router)
+    app.include_router(character_router)
 
     @app.exception_handler(SupabaseError)
     async def supabase_error(_: Request, exc: SupabaseError) -> JSONResponse:
@@ -38,7 +40,7 @@ def create_app() -> FastAPI:
             "status": "ok",
             "configured": {
                 "supabase": bool(settings.supabase_url and settings.supabase_publishable_key),
-                "openai": bool(settings.openai_api_key),
+                "openai": bool(settings.openai_api_key and settings.openai_chat_model),
             },
         }
 

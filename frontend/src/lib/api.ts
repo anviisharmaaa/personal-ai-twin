@@ -5,6 +5,7 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    public code?: string,
   ) {
     super(message);
   }
@@ -34,8 +35,13 @@ async function request<T>(method: string, path: string, body?: unknown, form?: F
   if (res.status === 204) return undefined as T;
   const json = (await res.json().catch(() => ({}))) as { detail?: unknown };
   if (!res.ok) {
-    const detail = typeof json.detail === "string" ? json.detail : "Something went wrong.";
-    throw new ApiError(res.status, detail);
+    // The API sends either a plain message or {code, message} (character analysis uses codes).
+    const d = json.detail;
+    if (d && typeof d === "object" && "message" in d) {
+      const o = d as { code?: string; message: string };
+      throw new ApiError(res.status, o.message, o.code);
+    }
+    throw new ApiError(res.status, typeof d === "string" ? d : "Something went wrong.");
   }
   return json as T;
 }
@@ -53,20 +59,53 @@ export type Twin = {
   id: string;
   name: string;
   about: string | null;
-  personality: { answers?: Record<string, string | string[]>; submitted_at?: string };
-  communication: { formality?: string; length?: string; emoji?: string };
+  /** The user's own words. The source of truth; the profile below is only an interpretation of it. */
+  character_description: string;
+  character_version: number;
   appearance: { framing?: string; background?: string; lighting?: string; portrait_subject?: string };
   portrait_path: string | null;
   portrait_url: string | null;
   portrait_permission_confirmed: boolean;
 };
 
+export type Basis = "stated" | "inferred" | "context_dependent";
+export type Item = { text: string; basis: Basis };
+export type CharacterProfile = {
+  summary: string;
+  core_traits: Item[];
+  speaking_style: Item[];
+  typical_expressions: string[];
+  warmth_and_expressiveness: Item[];
+  humour_and_playfulness: Item[];
+  empathy_and_support: Item[];
+  directness_and_disagreement: Item[];
+  values_and_motivations: Item[];
+  relationships_and_social: Item[];
+  interests_and_habits: Item[];
+  communication_preferences: Item[];
+  boundaries_and_careful_topics: Item[];
+  context_tendencies: { context: string; tendency: string; basis: Basis }[];
+  response_patterns: Item[];
+  behavioural_guidance: string[];
+  uncertainties: string[];
+};
+
+export type CharacterState = {
+  status: "empty" | "not_analysed" | "current" | "outdated";
+  description_version: number;
+  min_chars: number;
+  profile: CharacterProfile | null;
+  profile_version: number | null;
+  generated_at: string | null;
+  /** Code of the most recent failed attempt, if it happened after the last good profile. */
+  failure: string | null;
+};
+
 export type Me = {
   user_id: string;
   profile: { display_name: string | null; timezone: string } | null;
   twin: Twin | null;
+  character: CharacterState | null;
   completed_steps: string[];
   ai_consent: { granted: boolean; version: string | null; current_version: string };
 };
-
-export type Question = { id: string; prompt: string; multi: boolean; max?: number; options: string[] };

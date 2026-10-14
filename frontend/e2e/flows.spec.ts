@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fullTwin, mockApp, newBackend } from "./mock";
+import { DESCRIPTION, fullTwin, mockApp, newBackend, withCharacter } from "./mock";
 
 test.describe("auth gate and sign-in messages", () => {
   test("signed-out users are sent to sign-in", async ({ page }) => {
@@ -64,9 +64,10 @@ test.describe("guided onboarding", () => {
     await page.getByLabel("Twin’s name").fill("Anvi");
     await page.getByRole("button", { name: "Save and continue" }).click();
 
-    await expect(page.getByRole("heading", { name: "How does your twin communicate?" })).toBeVisible();
-    await page.getByRole("radio", { name: "Warm" }).click();
-    await page.getByRole("checkbox", { name: "Family" }).click();
+    await expect(page.getByRole("heading", { name: "Character", level: 2 })).toBeVisible();
+    await expect(page.getByRole("radio")).toHaveCount(0); // no questionnaire
+    await expect(page.getByRole("button", { name: "Save and continue" })).toBeDisabled(); // nothing written yet
+    await page.getByLabel("Describe the person").fill(DESCRIPTION);
     await page.getByRole("button", { name: "Save and continue" }).click();
 
     await expect(page.getByRole("heading", { name: "Add a portrait" })).toBeVisible();
@@ -75,14 +76,24 @@ test.describe("guided onboarding", () => {
     await expect(page.getByText("Foundation ready")).toBeVisible();
 
     expect(be.steps).toEqual(["welcome", "identity", "personality", "refinements"]);
-    const personality = be.calls.find((c) => c.path === "/api/v1/twin/personality");
-    expect(personality?.body).toEqual({ answers: { tone: "warm", values: ["family"] } });
+    const saved = be.calls.find((c) => c.path === "/api/v1/twin/character");
+    expect(saved?.body).toEqual({ description: DESCRIPTION, base_version: 0 });
+    expect(be.calls.some((c) => c.path === "/api/v1/twin/character/analyze")).toBe(false); // never analysed unasked
+  });
+
+  test("skipping the Character step does not mark it complete", async ({ page }) => {
+    const be = newBackend({ consent: true, steps: ["welcome", "identity"], twin: fullTwin() });
+    await mockApp(page, be);
+    await page.goto("/app/onboarding");
+    await page.getByRole("button", { name: "Skip for now" }).click();
+    await expect(page.getByRole("heading", { name: "Add a portrait" })).toBeVisible();
+    expect(be.steps).toEqual(["welcome", "identity"]);
   });
 
   test("resumes at the first incomplete step", async ({ page }) => {
-    await mockApp(page, newBackend({ consent: true, steps: ["welcome", "identity"], twin: fullTwin({ personality: {} }) }));
+    await mockApp(page, newBackend({ consent: true, steps: ["welcome", "identity"], twin: fullTwin() }));
     await page.goto("/app/onboarding");
-    await expect(page.getByRole("heading", { name: "How does your twin communicate?" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Character", level: 2 })).toBeVisible();
   });
 
   test("steps that don't exist yet are shown as locked, not clickable", async ({ page }) => {
@@ -131,18 +142,18 @@ test.describe("Twin Studio", () => {
     await expect(page.getByRole("button", { name: "Save changes" })).toBeEnabled();
   });
 
-  test("communication and appearance preferences are sent to the server", async ({ page }) => {
+  test("appearance preferences are sent to the server and the old questionnaires are gone", async ({ page }) => {
     const be = ready();
     await mockApp(page, be);
     await page.goto("/app/studio");
-    await page.getByRole("tab", { name: "Communication" }).click();
-    await page.getByRole("radio", { name: "Short" }).click();
+    await expect(page.getByRole("tab")).toHaveText(["Identity", "Character", "Appearance"]);
     await page.getByRole("tab", { name: "Appearance" }).click();
     await page.getByRole("radio", { name: "Maroon" }).click();
     await page.getByRole("button", { name: "Save changes" }).click();
     await expect(page.getByText("All changes saved")).toBeVisible();
     const put = be.calls.find((c) => c.method === "PUT" && c.path === "/api/v1/twin");
-    expect(put?.body).toMatchObject({ communication: { length: "short" }, appearance: { background: "maroon" } });
+    expect(put?.body).toMatchObject({ appearance: { background: "maroon" } });
+    expect(put?.body).not.toHaveProperty("communication");
   });
 
   test("portrait: crop dialog, permission gate for another person's portrait, upload and delete", async ({ page }) => {
@@ -259,5 +270,143 @@ test.describe("responsive shell and theme", () => {
     await expect(page.getByText(/You are offline/)).toBeVisible();
     await context.setOffline(false);
     await expect(page.getByText(/You are offline/)).toHaveCount(0);
+  });
+});
+
+
+test.describe("Character workspace (mocked backend and mocked analysis)", () => {
+  const open = async (page: import("@playwright/test").Page, be: ReturnType<typeof withCharacter>) => {
+    await mockApp(page, be);
+    await page.goto("/app/studio");
+    await page.getByRole("tab", { name: "Character" }).click();
+  };
+
+  test("a saved description is kept as written and nothing is pre-filled for a new twin", async ({ page }) => {
+    await open(page, withCharacter(false));
+    await expect(page.getByLabel("Describe the person")).toHaveValue(DESCRIPTION);
+    await page.unrouteAll();
+    const blank = newBackend({ consent: true, steps: ["welcome", "identity"], twin: fullTwin() });
+    await open(page, blank as ReturnType<typeof withCharacter>);
+    await expect(page.getByLabel("Describe the person")).toHaveValue("");
+    await expect(page.getByText("Not started")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Understand this character" })).toBeDisabled();
+    await expect(page.getByText(/Write at least 40 characters/)).toBeVisible();
+  });
+
+  test("live count, over-limit error, and short text keeps analysis disabled", async ({ page }) => {
+    await open(page, withCharacter(false));
+    await page.getByLabel("Describe the person").fill("x".repeat(8005));
+    await expect(page.getByText("That’s 5 characters over the 8,000 limit. Please shorten it.")).toBeVisible();
+    await expect(page.getByText("8,005 / 8,000 characters")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Save description" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Understand this character" })).toBeDisabled();
+  });
+
+  test("analysing saves first, shows the interpretation, and omits unsupported sections", async ({ page }) => {
+    const be = withCharacter(false);
+    await open(page, be);
+    await page.getByLabel("Describe the person").fill(DESCRIPTION + " She never says I love you aloud.");
+    await expect(page.getByText("You have unsaved changes")).toBeVisible();
+    await page.getByRole("button", { name: "Understand this character" }).click();
+    await expect(page.getByRole("heading", { name: "What Madhuora understood" })).toBeVisible();
+    await expect(page.getByText("Warm and teasing with close friends")).toBeVisible();
+    await expect(page.getByText("Around strangers")).toBeVisible();
+    await expect(page.getByText("Depends on the situation")).toBeVisible();
+    // Empty areas are not rendered, rather than shown as invented or blank content.
+    await expect(page.getByRole("heading", { name: "What matters to them" })).toHaveCount(0);
+    await expect(page.getByRole("status").filter({ hasText: "Interpretation updated." })).toBeVisible();
+    await expect(page.getByText("Up to date with your description")).toBeVisible();
+    // Saved before analysed, with the version it returned.
+    const paths = be.calls.filter((c) => c.method !== "GET" && c.path.startsWith("/api/v1/twin/character")).map((c) => c.path);
+    expect(paths).toEqual(["/api/v1/twin/character", "/api/v1/twin/character/analyze"]);
+    expect(be.calls.find((c) => c.path.endsWith("/analyze"))?.body).toEqual({ version: 2 });
+    await expect(page.getByLabel("Describe the person")).toHaveValue(DESCRIPTION + " She never says I love you aloud.");
+    await expect(page.getByText("An AI-generated interpretation of your words.")).toBeVisible();
+  });
+
+  test("editing marks the interpretation outdated without discarding it; regenerating refreshes it", async ({ page }) => {
+    const be = withCharacter(true);
+    await open(page, be);
+    await expect(page.getByRole("status").filter({ hasText: "Up to date with your description" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Update the interpretation" })).toBeDisabled(); // nothing to update
+    await page.getByLabel("Describe the person").fill(DESCRIPTION + " She hates being rushed.");
+    await expect(page.getByText(/made from an earlier version of your description/)).toBeVisible();
+    await expect(page.getByText("Warm and teasing with close friends")).toBeVisible();
+    await page.getByRole("button", { name: "Save description" }).click();
+    await expect(page.getByText("Saved.")).toBeVisible();
+    await expect(page.getByText("Your description has changed since this was made").first()).toBeVisible();
+    await page.getByRole("button", { name: "Update the interpretation" }).click();
+    await expect(page.getByText("Interpretation updated.")).toBeVisible();
+    await expect(page.getByText(/made from an earlier version/)).toHaveCount(0);
+  });
+
+  test("a failed analysis keeps the previous interpretation and the user's text, and can be retried", async ({ page }) => {
+    const be = withCharacter(true, { analyze: "timeout" });
+    await open(page, be);
+    await page.getByLabel("Describe the person").fill(DESCRIPTION + " Extra detail.");
+    await page.getByRole("button", { name: "Update the interpretation" }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "took too long" })).toBeVisible();
+    await expect(page.getByText("Your description is saved. You can retry.")).toBeVisible();
+    await expect(page.getByText("Warm and teasing with close friends")).toBeVisible(); // last good profile still there
+    await expect(page.getByText(/made from an earlier version of your description/)).toBeVisible(); // and not called current
+    await expect(page.getByLabel("Describe the person")).toHaveValue(DESCRIPTION + " Extra detail.");
+    be.analyze = "ok";
+    await page.getByRole("button", { name: "Update the interpretation" }).click();
+    await expect(page.getByText("Interpretation updated.")).toBeVisible();
+  });
+
+  test("repeated clicks send one analysis request", async ({ page }) => {
+    const be = withCharacter(false, { analyzeDelayMs: 600 });
+    await open(page, be);
+    const btn = page.getByRole("button", { name: "Understand this character" });
+    await btn.click();
+    await btn.click({ force: true, timeout: 500 }).catch(() => undefined);
+    await expect(page.getByRole("heading", { name: "What Madhuora understood" })).toBeVisible();
+    expect(be.calls.filter((c) => c.path.endsWith("/analyze"))).toHaveLength(1);
+  });
+
+  test("without consent analysis is disabled and explains why; the description can still be saved", async ({ page }) => {
+    await open(page, withCharacter(false, { consent: false }));
+    await expect(page.getByRole("button", { name: "Understand this character" })).toBeDisabled();
+    await expect(page.getByText("AI processing consent is needed before Madhuora can read this.")).toBeVisible();
+    await page.getByLabel("Describe the person").fill(DESCRIPTION + " More.");
+    await expect(page.getByRole("button", { name: "Save description" })).toBeEnabled();
+  });
+
+  test("when the server has no AI configured the UI says so instead of faking a result", async ({ page }) => {
+    const be = withCharacter(false, { openaiConfigured: false });
+    await open(page, be);
+    await expect(page.getByText(/AI analysis isn’t set up on this server yet/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Understand this character" })).toBeDisabled();
+    await expect(page.getByRole("heading", { name: "What Madhuora understood" })).toHaveCount(0);
+  });
+
+  test("unsaved description edits are protected when leaving", async ({ page }) => {
+    await open(page, withCharacter(false));
+    await page.getByLabel("Describe the person").fill(DESCRIPTION + " Changed.");
+    await page.getByRole("link", { name: "Settings" }).click();
+    await expect(page.getByRole("alertdialog", { name: "Unsaved changes" })).toBeVisible();
+    await page.getByRole("button", { name: "Keep editing" }).click();
+    await expect(page.getByLabel("Describe the person")).toHaveValue(DESCRIPTION + " Changed.");
+  });
+
+  test("a save conflict from another tab is explained, not silently overwritten", async ({ page }) => {
+    const be = withCharacter(false);
+    await open(page, be);
+    await page.getByLabel("Describe the person").fill(DESCRIPTION + " Mine.");
+    be.character.version = 5; // someone else saved meanwhile
+    be.character.description = "Their version";
+    await page.getByRole("button", { name: "Save description" }).click();
+    await expect(page.getByText(/changed in another tab or device/)).toBeVisible();
+    await expect(page.getByLabel("Describe the person")).toHaveValue(DESCRIPTION + " Mine.");
+  });
+
+  test("consent can be given again after withdrawal", async ({ page }) => {
+    const be = withCharacter(false, { consent: false });
+    await mockApp(page, be);
+    await page.goto("/app/settings");
+    await page.getByRole("button", { name: "Agree to AI processing" }).click();
+    await expect(page.getByText(/You agreed to external AI processing/)).toBeVisible();
+    expect(be.consent).toBe(true);
   });
 });

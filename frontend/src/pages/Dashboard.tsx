@@ -8,7 +8,7 @@ import { useMe } from "../hooks/useMe";
 export const SETUP_STEPS = [
   { id: "welcome", label: "Privacy & consent" },
   { id: "identity", label: "Identity" },
-  { id: "personality", label: "Personality" },
+  { id: "personality", label: "Character" },
 ] as const;
 
 export function Dashboard() {

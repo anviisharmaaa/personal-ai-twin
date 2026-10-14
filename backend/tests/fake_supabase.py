@@ -7,11 +7,13 @@ policies are verified against the actual database separately.
 
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
 
-OWNER_COL = {"profiles": "id", "twins": "owner_id", "onboarding_steps": "user_id", "consents": "user_id"}
+OWNER_COL = {"profiles": "id", "twins": "owner_id", "onboarding_steps": "user_id", "consents": "user_id",
+             "character_profiles": "owner_id", "ai_usage": "owner_id"}
 RESERVED = {"select", "order", "limit", "on_conflict"}
 
 
@@ -47,6 +49,9 @@ class FakeSupabase:
             elif v.startswith("eq."):
                 if str(row.get(k)) != v[3:]:
                     return False
+            elif v.startswith("gte."):
+                if str(row.get(k, "")) < v[4:]:
+                    return False
         return True
 
     def _handle(self, req: httpx.Request) -> httpx.Response:
@@ -70,6 +75,11 @@ class FakeSupabase:
         rows = self.tables[table]
         visible = [r for r in rows if str(r[col]) == uid and self._match(r, params)]
         if req.method == "GET":
+            if "order" in params:
+                field, _, direction = params["order"].partition(".")
+                visible = sorted(visible, key=lambda r: str(r.get(field, "")), reverse=direction == "desc")
+            if "limit" in params:
+                visible = visible[: int(params["limit"])]
             return httpx.Response(200, json=visible)
         if req.method == "POST":
             body = json.loads(req.content)
@@ -77,12 +87,16 @@ class FakeSupabase:
                 return httpx.Response(403, json={"code": "42501"})  # RLS violation
             if table == "twins" and any(str(r[col]) == uid for r in rows):
                 return httpx.Response(409, json={"code": "23505"})
+            if table == "character_profiles" and any(r["twin_id"] == body.get("twin_id") for r in rows):
+                return httpx.Response(409, json={"code": "23505"})  # unique(twin_id)
             if table == "onboarding_steps":
                 for r in rows:
                     if r["user_id"] == uid and r["step"] == body["step"]:
                         return httpx.Response(201, json=[r])
             self._n += 1
+            now = datetime.now(timezone.utc).isoformat()
             row = {"id": f"id-{self._n}", "personality": {}, "communication": {}, "appearance": {},
+                   "character_description": "", "character_version": 0, "created_at": now,
                    "portrait_path": None, "portrait_permission_confirmed": False,
                    "granted_at": "2026-10-14T00:00:00Z", "withdrawn_at": None, **body}
             rows.append(row)

@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from tests.conftest import auth
 from tests.fake_supabase import FakeSupabase
 
-CONSENT = "2026-10-v1"
+CONSENT = "2026-10-v2"
 
 
 def png_bytes() -> bytes:
@@ -41,22 +41,19 @@ def test_welcome_requires_real_consent(client: TestClient) -> None:
     assert client.get("/api/v1/me", headers=h).json()["ai_consent"]["granted"] is False
 
 
-def test_identity_and_personality_flow(client: TestClient) -> None:
+def test_identity_flow(client: TestClient) -> None:
     h = auth("alice")
     assert client.post("/api/v1/onboarding/steps/identity/complete", headers=h).status_code == 409
     assert client.put("/api/v1/twin", json={"about": "hi"}, headers=h).status_code == 422
-    r = client.put("/api/v1/twin", json={"name": "Anvi", "communication": {"length": "short"}}, headers=h)
+    r = client.put("/api/v1/twin", json={"name": "Anvi", "appearance": {"framing": "close"}}, headers=h)
     assert r.status_code == 200 and r.json()["name"] == "Anvi"
-    r = client.put("/api/v1/twin", json={"communication": {"emoji": "never"}}, headers=h)
-    assert r.json()["communication"] == {"length": "short", "emoji": "never"}  # merged, not replaced
+    r = client.put("/api/v1/twin", json={"appearance": {"lighting": "warm"}}, headers=h)
+    assert r.json()["appearance"] == {"framing": "close", "lighting": "warm"}  # merged, not replaced
     assert client.post("/api/v1/onboarding/steps/identity/complete", headers=h).status_code == 200
-    assert client.post("/api/v1/onboarding/steps/personality/complete", headers=h).status_code == 409
-    bad = client.put("/api/v1/twin/personality", json={"answers": {"tone": "evil"}}, headers=h)
-    assert bad.status_code == 422
-    assert client.put("/api/v1/twin/personality", json={"answers": {"nope": "x"}}, headers=h).status_code == 422
-    ok = client.put("/api/v1/twin/personality", json={"answers": {"tone": "not_sure", "values": ["family"]}}, headers=h)
-    assert ok.status_code == 200 and ok.json()["personality"]["answers"]["tone"] == "not_sure"
-    assert client.post("/api/v1/onboarding/steps/personality/complete", headers=h).status_code == 200
+    # The old questionnaire endpoints are gone, and the old "communication" field is no longer accepted.
+    assert client.get("/api/v1/onboarding/questionnaire", headers=h).status_code == 404
+    assert client.put("/api/v1/twin/personality", json={"answers": {}}, headers=h).status_code in (404, 405)
+    assert client.put("/api/v1/twin", json={"communication": {"emoji": "never"}}, headers=h).status_code == 422
 
 
 def test_unavailable_steps_cannot_be_marked(client: TestClient) -> None:

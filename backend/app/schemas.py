@@ -1,7 +1,8 @@
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# "personality" is the stored id of the Character step (kept so existing progress and the DB check stay valid).
 OnboardingStep = Literal[
     "welcome", "identity", "personality", "memory_import", "memory_review", "first_chat", "refinements"
 ]
@@ -16,12 +17,6 @@ class ProfileIn(_Strict):
     timezone: str | None = Field(default=None, max_length=64)
 
 
-class Communication(_Strict):
-    formality: Literal["casual", "balanced", "formal"] | None = None
-    length: Literal["short", "medium", "long"] | None = None
-    emoji: Literal["never", "sometimes", "often"] | None = None
-
-
 class Appearance(_Strict):
     framing: Literal["close", "bust", "wide"] | None = None
     background: Literal["ivory", "wine", "maroon", "gold"] | None = None
@@ -31,12 +26,17 @@ class Appearance(_Strict):
 class TwinIn(_Strict):
     name: str | None = Field(default=None, min_length=1, max_length=80)
     about: str | None = Field(default=None, max_length=2000)
-    communication: Communication | None = None
     appearance: Appearance | None = None
 
 
-class PersonalityIn(_Strict):
-    answers: dict[str, Any]
+class CharacterIn(_Strict):
+    # The user's own words. May be empty (clears it). base_version guards against overwriting a newer edit.
+    description: str = Field(max_length=8000)
+    base_version: int = Field(ge=0)
+
+
+class AnalyzeIn(_Strict):
+    version: int = Field(ge=1)
 
 
 class ConsentIn(_Strict):

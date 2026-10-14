@@ -6,13 +6,14 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
 from app.auth import AuthUser, current_user
-from app.questionnaire import QUESTIONS, validate_answers
-from app.schemas import ConsentIn, OnboardingStep, PersonalityIn, ProfileIn, TwinIn
+from app.character_store import character_view, get_profile_row
+from app.schemas import ConsentIn, OnboardingStep, ProfileIn, TwinIn
 from app.supabase_rest import SupabaseError, SupabaseRest, get_rest
 
 router = APIRouter(prefix="/api/v1")
 
-CONSENT_VERSION = "2026-10-v1"
+# v2: the text now covers sending character descriptions to an external AI provider for analysis.
+CONSENT_VERSION = "2026-10-v2"
 BUCKET = "portraits"
 MAX_PORTRAIT_BYTES = 5 * 1024 * 1024
 UNAVAILABLE_STEPS = {
@@ -72,12 +73,16 @@ async def me(user: AuthUser = Depends(current_user), rest: SupabaseRest = Depend
         rest.select(user.token, "onboarding_steps", {"select": "step,completed_at", "user_id": _eq(user.id)}),
         _active_consent(rest, user),
     )
+    row = await get_profile_row(rest, user, twin["id"]) if twin else None
     return {
         "user_id": user.id,
         "profile": profile[0] if profile else None,
         "twin": await _with_portrait_url(rest, user, twin) if twin else None,
+        "character": character_view(twin, row) if twin else None,
         "completed_steps": sorted(s["step"] for s in steps),
-        "ai_consent": {"granted": consent is not None, "version": consent["version"] if consent else None,
+        # Only a consent to the *current* wording counts. An older version must be re-accepted.
+        "ai_consent": {"granted": bool(consent and consent["version"] == CONSENT_VERSION),
+                       "version": consent["version"] if consent else None,
                        "current_version": CONSENT_VERSION},
     }
 
@@ -95,11 +100,6 @@ async def update_profile(
     return rows[0]
 
 
-@router.get("/onboarding/questionnaire")
-async def questionnaire(_: AuthUser = Depends(current_user)) -> dict[str, Any]:
-    return {"questions": QUESTIONS}
-
-
 @router.post("/consents/ai-processing", status_code=status.HTTP_201_CREATED)
 async def grant_ai_consent(
     body: ConsentIn, user: AuthUser = Depends(current_user), rest: SupabaseRest = Depends(get_rest)
@@ -107,7 +107,7 @@ async def grant_ai_consent(
     if body.version != CONSENT_VERSION:
         raise HTTPException(status.HTTP_409_CONFLICT, "Consent text has changed; please review it again.")
     existing = await _active_consent(rest, user)
-    if existing:
+    if existing and existing["version"] == CONSENT_VERSION:
         return existing
     return await rest.insert(
         user.token, "consents", {"user_id": user.id, "kind": "ai_processing", "version": body.version}
@@ -144,32 +144,13 @@ async def upsert_twin(
         else:
             return await _with_portrait_url(rest, user, row)
     assert existing is not None
-    for key in ("communication", "appearance"):
-        if key in patch:
-            patch[key] = {**(existing.get(key) or {}), **patch[key]}
+    if "appearance" in patch:
+        patch["appearance"] = {**(existing.get("appearance") or {}), **patch["appearance"]}
     if not patch:
         return await _with_portrait_url(rest, user, existing)
     rows = await rest.update(user.token, "twins", {"owner_id": _eq(user.id), "id": _eq(existing["id"])}, patch)
     if not rows:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Twin not found.")
-    return await _with_portrait_url(rest, user, rows[0])
-
-
-@router.put("/twin/personality")
-async def save_personality(
-    body: PersonalityIn, user: AuthUser = Depends(current_user), rest: SupabaseRest = Depends(get_rest)
-) -> dict[str, Any]:
-    twin = await _twin(rest, user)
-    if twin is None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Create your twin's identity first.")
-    try:
-        answers = validate_answers(body.answers)
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
-    personality = {"version": 1, "answers": answers, "submitted_at": datetime.now(timezone.utc).isoformat()}
-    rows = await rest.update(
-        user.token, "twins", {"owner_id": _eq(user.id), "id": _eq(twin["id"])}, {"personality": personality}
-    )
     return await _with_portrait_url(rest, user, rows[0])
 
 
@@ -237,12 +218,13 @@ async def complete_step(
     if step in UNAVAILABLE_STEPS:
         raise HTTPException(status.HTTP_409_CONFLICT, UNAVAILABLE_STEPS[step])
     twin = await _twin(rest, user)
-    if step == "welcome" and await _active_consent(rest, user) is None:
+    consent = await _active_consent(rest, user) if step == "welcome" else None
+    if step == "welcome" and not (consent and consent["version"] == CONSENT_VERSION):
         raise HTTPException(status.HTTP_409_CONFLICT, "Please accept AI processing to continue.")
     if step == "identity" and not (twin and twin.get("name")):
         raise HTTPException(status.HTTP_409_CONFLICT, "Save your twin's identity first.")
-    if step == "personality" and not (twin and (twin.get("personality") or {}).get("submitted_at")):
-        raise HTTPException(status.HTTP_409_CONFLICT, "Save the personality questions first.")
+    if step == "personality" and not (twin and (twin.get("character_description") or "").strip()):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Describe your twin's character first.")
     if step == "refinements" and twin is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Create your twin first.")
     await rest.insert(

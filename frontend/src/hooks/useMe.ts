@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type Me, type Question, type Twin } from "../lib/api";
+import { api, type CharacterState, type Me, type Twin } from "../lib/api";
+import { config } from "../lib/config";
 
 export const ME_KEY = ["me"];
 
@@ -7,11 +8,17 @@ export function useMe(enabled = true) {
   return useQuery({ queryKey: ME_KEY, queryFn: () => api.get<Me>("/api/v1/me"), enabled, retry: 1 });
 }
 
-export function useQuestionnaire() {
+/** Public readiness probe: tells the UI up front whether the server can run AI analysis. */
+export function useReady() {
   return useQuery({
-    queryKey: ["questionnaire"],
-    queryFn: () => api.get<{ questions: Question[] }>("/api/v1/onboarding/questionnaire"),
-    staleTime: Infinity,
+    queryKey: ["ready"],
+    queryFn: async () => {
+      const r = await fetch(`${config.apiUrl}/ready`);
+      if (!r.ok) throw new Error("not ready");
+      return (await r.json()) as { configured?: { supabase?: boolean; openai?: boolean } };
+    },
+    retry: false,
+    staleTime: 60_000,
   });
 }
 
@@ -24,11 +31,19 @@ export const useGrantConsent = (version: string) =>
   useRefreshingMutation<void, unknown>(() => api.post("/api/v1/consents/ai-processing", { version }));
 export const useWithdrawConsent = () => useRefreshingMutation<void, void>(() => api.del("/api/v1/consents/ai-processing"));
 export const useSaveTwin = () =>
-  useRefreshingMutation((b: { name?: string; about?: string; communication?: object; appearance?: object }) =>
+  useRefreshingMutation((b: { name?: string; about?: string; appearance?: object }) =>
     api.put<Twin>("/api/v1/twin", b),
   );
-export const useSavePersonality = () =>
-  useRefreshingMutation((answers: Record<string, string | string[]>) => api.put<Twin>("/api/v1/twin/personality", { answers }));
+export const useSaveCharacter = () =>
+  useRefreshingMutation((v: { description: string; baseVersion: number }) =>
+    api.put<{ twin: Twin; character: CharacterState }>("/api/v1/twin/character", {
+      description: v.description, base_version: v.baseVersion,
+    }),
+  );
+export const useAnalyzeCharacter = () =>
+  useRefreshingMutation((version: number) =>
+    api.post<{ character: CharacterState; cached: boolean }>("/api/v1/twin/character/analyze", { version }),
+  );
 export const useCompleteStep = () =>
   useRefreshingMutation((step: string) => api.post(`/api/v1/onboarding/steps/${step}/complete`));
 export const useSaveProfile = () =>

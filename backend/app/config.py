@@ -15,6 +15,14 @@ class Settings(BaseSettings):
     # Reserved for later stages (workers, deletion). Never used for user-facing reads.
     supabase_service_role_key: str = ""
     openai_api_key: str = ""
+    # No default on purpose: the model is chosen explicitly by the operator and never switched silently.
+    openai_chat_model: str = ""
+    # Kill switch for every external AI call (budget protection / incident response).
+    ai_enabled: bool = True
+    # Per-user cap on character analyses per rolling 24 hours (a UI limit alone cannot guarantee spend).
+    analysis_daily_limit: int = 10
+    analysis_timeout_seconds: float = 60.0
+    analysis_max_output_tokens: int = 3000
     cors_origins: str = "http://localhost:5173"
 
     @property
