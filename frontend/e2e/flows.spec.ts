@@ -321,7 +321,7 @@ test.describe("Character workspace (mocked backend and mocked analysis)", () => 
     expect(paths).toEqual(["/api/v1/twin/character", "/api/v1/twin/character/analyze"]);
     expect(be.calls.find((c) => c.path.endsWith("/analyze"))?.body).toEqual({ version: 2 });
     await expect(page.getByLabel("Describe the person")).toHaveValue(DESCRIPTION + " She never says I love you aloud.");
-    await expect(page.getByText("An AI-generated interpretation of your words.")).toBeVisible();
+    await expect(page.getByText(/An AI-generated interpretation of your words, made by NVIDIA \(nvidia\/test-model\)/)).toBeVisible();
   });
 
   test("editing marks the interpretation outdated without discarding it; regenerating refreshes it", async ({ page }) => {
@@ -374,7 +374,7 @@ test.describe("Character workspace (mocked backend and mocked analysis)", () => 
   });
 
   test("when the server has no AI configured the UI says so instead of faking a result", async ({ page }) => {
-    const be = withCharacter(false, { openaiConfigured: false });
+    const be = withCharacter(false, { aiConfigured: false });
     await open(page, be);
     await expect(page.getByText(/AI analysis isn’t set up on this server yet/)).toBeVisible();
     await expect(page.getByRole("button", { name: "Understand this character" })).toBeDisabled();
@@ -399,6 +399,40 @@ test.describe("Character workspace (mocked backend and mocked analysis)", () => 
     await page.getByRole("button", { name: "Save description" }).click();
     await expect(page.getByText(/changed in another tab or device/)).toBeVisible();
     await expect(page.getByLabel("Describe the person")).toHaveValue(DESCRIPTION + " Mine.");
+  });
+
+  test("consent text names the provider that is actually configured, never a hard-coded one", async ({ page }) => {
+    await mockApp(page, withCharacter(false, { consent: false }));
+    await page.goto("/app/settings");
+    await expect(page.getByText("AI provider on this server: NVIDIA")).toBeVisible();
+    await expect(page.getByText(/NVIDIA's hosted API/)).toBeVisible();
+    await expect(page.getByText(/OpenAI/)).toHaveCount(0);
+  });
+
+  test("a development provider shows a fictional-text-only warning next to the action", async ({ page }) => {
+    await open(page, withCharacter(false));
+    await expect(page.getByText(/Development AI provider \(NVIDIA\)/)).toBeVisible();
+    await expect(page.getByText(/fictional or non-sensitive text only/)).toBeVisible();
+  });
+
+  test("sample mode is labelled as a sample and never described as AI-generated", async ({ page }) => {
+    const be = withCharacter(false, { provider: "mock" });
+    await open(page, be);
+    await expect(page.getByText(/Development AI provider/)).toHaveCount(0); // nothing leaves the server
+    await page.getByRole("button", { name: "Understand this character" }).click();
+    await expect(page.getByText("Sample output, not an AI reading.")).toBeVisible();
+    await expect(page.getByText(/An AI-generated interpretation/)).toHaveCount(0);
+  });
+
+  test("when the free provider's allowance is used up the user is told, and nothing is overwritten", async ({ page }) => {
+    const be = withCharacter(true, { analyze: "quota_exhausted" });
+    await open(page, be);
+    await page.getByLabel("Describe the person").fill(DESCRIPTION + " More detail.");
+    await page.getByRole("button", { name: "Update the interpretation" }).click();
+    await expect(page.getByText(/free allowance is used up/)).toBeVisible();
+    await expect(page.getByLabel("Describe the person")).toHaveValue(DESCRIPTION + " More detail.");
+    await expect(page.getByText("Warm and teasing with close friends")).toBeVisible(); // last good profile kept
+    expect(be.calls.filter((c) => c.path.endsWith("/analyze"))).toHaveLength(1); // no automatic retry
   });
 
   test("consent can be given again after withdrawal", async ({ page }) => {

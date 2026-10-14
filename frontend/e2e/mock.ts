@@ -35,7 +35,9 @@ export type Backend = {
   twin: Twin; steps: string[]; consent: boolean; calls: { method: string; path: string; body?: unknown }[];
   failTwinSave: boolean;
   character: Character;
-  openaiConfigured: boolean;
+  aiConfigured: boolean;
+  /** Which provider the mocked server reports. "mock" returns a sample-labelled profile. */
+  provider: "nvidia" | "mock" | "none";
   /** "ok" returns the mock profile; any other value is returned as an error code from the analysis endpoint. */
   analyze: string;
   analyzeDelayMs: number;
@@ -43,7 +45,7 @@ export type Backend = {
 
 export function newBackend(init: Partial<Backend> = {}): Backend {
   return {
-    twin: null, steps: [], consent: false, calls: [], failTwinSave: false, openaiConfigured: true, analyze: "ok",
+    twin: null, steps: [], consent: false, calls: [], failTwinSave: false, aiConfigured: true, provider: "nvidia", analyze: "ok",
     analyzeDelayMs: 0, character: { description: "", version: 0, profile: null, profileVersion: null, failure: null },
     ...init,
   };
@@ -64,11 +66,24 @@ export const withCharacter = (analysed = false, over: Partial<Backend> = {}) =>
     ...over,
   });
 
+export const PROVIDERS = {
+  nvidia: { id: "nvidia", label: "NVIDIA", external: true, development_only: true,
+    disclosure: ["The character description you write is sent from Madhuora's server to NVIDIA's hosted API (NVIDIA NIM at build.nvidia.com), which runs outside India.",
+      "While this provider is active, please use fictional or non-sensitive descriptions only."] },
+  mock: { id: "mock", label: "Sample (no AI)", external: false, development_only: true,
+    disclosure: ["This server is in sample mode. No AI model is used and nothing you write leaves Madhuora."] },
+  none: { id: "none", label: "None", external: false, development_only: false,
+    disclosure: ["No AI provider is configured on this server, so no AI analysis can run."] },
+};
+
 const view = (be: Backend) => {
   const c = be.character;
   const status = !c.description.trim() ? "empty" : c.profile === null ? "not_analysed" : c.profileVersion === c.version ? "current" : "outdated";
   return { status, description_version: c.version, min_chars: 40, profile: c.profile, profile_version: c.profile ? c.profileVersion : null,
-    generated_at: c.profile ? "2026-10-14T09:00:00+00:00" : null, failure: c.failure };
+    generated_at: c.profile ? "2026-10-14T09:00:00+00:00" : null,
+    generated_by: c.profile ? (be.provider === "mock" ? { provider: "mock", model: "sample-fixture", is_sample: true }
+      : { provider: "nvidia", model: "nvidia/test-model", is_sample: false }) : null,
+    failure: c.failure };
 };
 
 export async function mockApp(page: Page, be: Backend, opts: { auth?: boolean; theme?: "light" | "dark"; supabase?: (r: Route) => Promise<void> | void } = {}) {
@@ -97,10 +112,10 @@ export async function mockApp(page: Page, be: Backend, opts: { auth?: boolean; t
         user_id: "u1", profile: { display_name: "Anvi", timezone: "Asia/Calcutta" },
         twin: be.twin ? { ...be.twin, character_description: be.character.description, character_version: be.character.version } : null,
         character: be.twin ? view(be) : null, completed_steps: be.steps,
-        ai_consent: { granted: be.consent, version: be.consent ? "2026-10-v2" : null, current_version: "2026-10-v2" },
+        ai_consent: { granted: be.consent, version: be.consent ? "2026-10-v3-x" : null, current_version: "2026-10-v3-x", provider: PROVIDERS[be.provider] },
       });
     }
-    if (path === "/ready") return json({ status: "ok", configured: { supabase: true, openai: be.openaiConfigured } });
+    if (path === "/ready") return json({ status: "ok", ai_provider: be.provider, configured: { supabase: true, ai: be.aiConfigured } });
     if (path === "/api/v1/twin/character" && req.method() === "PUT") {
       const b = body as { description: string; base_version: number };
       if (b.description !== be.character.description) {
@@ -113,7 +128,7 @@ export async function mockApp(page: Page, be: Backend, opts: { auth?: boolean; t
       if (be.analyzeDelayMs) await new Promise((res) => setTimeout(res, be.analyzeDelayMs));
       if (be.analyze !== "ok") {
         be.character = { ...be.character, failure: be.analyze };
-        return json({ detail: { code: be.analyze, message: "The AI took too long to respond. Please try again." } }, 504);
+        return json({ detail: { code: be.analyze, message: be.analyze === "quota_exhausted" ? "The AI service's free allowance is used up for now." : "The AI took too long to respond. Please try again." } }, be.analyze === "quota_exhausted" ? 503 : 504);
       }
       be.character = { ...be.character, profile: MOCK_PROFILE, profileVersion: (body as { version: number }).version, failure: null };
       return json({ character: view(be), cached: false });

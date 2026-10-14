@@ -86,15 +86,16 @@ function ConsentCard() {
       <h2 className="text-base font-semibold">AI processing consent</h2>
       <p className="mt-2 text-sm text-muted">
         {c.granted ? `You agreed to external AI processing (v${c.version}). You can withdraw at any time.`
-          : c.version ? "The wording changed since you last agreed, or you withdrew consent. No AI feature will run until you agree again."
+          : c.version ? "The wording or the AI provider changed since you last agreed, or you withdrew consent. No AI feature will run until you agree again."
           : "You haven’t agreed to external AI processing, so no AI features can run for your twin."}
       </p>
-      {!c.granted && (
-        <p className="mt-2 text-sm text-muted">
-          If you agree, the character description you write is sent to an external AI provider (currently OpenAI, which
-          processes data outside India) only when you ask Madhuora to understand it.
-        </p>
-      )}
+      <div className="mt-3 text-sm">
+        <p className="font-medium">AI provider on this server: {c.provider.label}</p>
+        <ul className="mt-2 list-disc space-y-2 pl-5 text-muted">
+          {c.provider.disclosure.map((d) => <li key={d}>{d}</li>)}
+        </ul>
+        {c.provider.external && <p className="mt-2 text-muted">Nothing is sent until you ask Madhuora to understand a character.</p>}
+      </div>
       {!c.granted && <div className="mt-4"><Button loading={grant.isPending} onClick={async () => { setErr(null); try { await grant.mutateAsync(); } catch (e) { setErr(e instanceof Error ? e.message : "Couldn’t record consent."); } }}>Agree to AI processing</Button></div>}
       {c.granted && <div className="mt-4"><Button variant="secondary" loading={withdraw.isPending} onClick={async () => { setErr(null); try { await withdraw.mutateAsync(); } catch (e) { setErr(e instanceof Error ? e.message : "Couldn’t withdraw."); } }}>Withdraw consent</Button></div>}
       {err && <div className="mt-3"><Notice tone="error">{err}</Notice></div>}

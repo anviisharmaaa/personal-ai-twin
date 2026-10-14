@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from tests.conftest import auth
 from tests.fake_supabase import FakeSupabase
 
-CONSENT = "2026-10-v2"
+CONSENT = "2026-10-v3-none"  # tests run with AI_PROVIDER unset; the version is provider-specific
 
 
 def png_bytes() -> bytes:

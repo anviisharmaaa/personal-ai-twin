@@ -6,7 +6,7 @@ import { Segmented } from "../components/Segmented";
 import { TwinAvatar } from "../components/TwinAvatar";
 import { Button, Card, EmptyState, Notice, Skeleton, TextArea, TextField } from "../components/ui";
 import { useMe, useSaveTwin } from "../hooks/useMe";
-import type { CharacterState, Twin } from "../lib/api";
+import type { CharacterState, ProviderInfo, Twin } from "../lib/api";
 
 type Form = {
   name: string; about: string;
@@ -29,10 +29,10 @@ export function TwinStudio() {
       <div className="mt-8"><EmptyState title="No twin yet" body="Create your twin’s identity first, then come back here to refine it."
         action={<Link to="/app/onboarding"><Button>Start setup</Button></Link>} /></div></div>);
   }
-  return <Studio twin={me.data.twin} character={me.data.character!} consentGranted={me.data.ai_consent.granted} key={me.data.twin.id} />;
+  return <Studio twin={me.data.twin} character={me.data.character!} consentGranted={me.data.ai_consent.granted} provider={me.data.ai_consent.provider} key={me.data.twin.id} />;
 }
 
-function Studio({ twin, character, consentGranted }: { twin: Twin; character: CharacterState; consentGranted: boolean }) {
+function Studio({ twin, character, consentGranted, provider }: { twin: Twin; character: CharacterState; consentGranted: boolean; provider: ProviderInfo }) {
   const saveTwin = useSaveTwin();
   const [tab, setTab] = useState<(typeof TABS)[number]>("Identity");
   const [baseline, setBaseline] = useState<Form>(() => fromTwin(twin));
@@ -87,7 +87,7 @@ function Studio({ twin, character, consentGranted }: { twin: Twin; character: Ch
             </div>
           )}
           {tab === "Character" && (
-            <CharacterEditor twin={twin} character={character} consentGranted={consentGranted} mode="studio" onDirtyChange={setCharDirty} />
+            <CharacterEditor twin={twin} character={character} consentGranted={consentGranted} provider={provider} mode="studio" onDirtyChange={setCharDirty} />
           )}
           {tab === "Appearance" && (
             <div className="space-y-8">

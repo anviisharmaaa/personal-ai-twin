@@ -14,6 +14,15 @@ class Settings(BaseSettings):
     supabase_jwt_secret: str = ""
     # Reserved for later stages (workers, deletion). Never used for user-facing reads.
     supabase_service_role_key: str = ""
+    # Which external AI provider character analysis uses: "nvidia", "openai", "mock" (sample output, no network;
+    # refused when APP_ENV=production) or empty (AI off). Explicit on purpose: there is no automatic fallback.
+    ai_provider: str = ""
+    # NVIDIA NIM hosted API (free development endpoint). Character model has no default in code.
+    nvidia_api_key: str = ""
+    nvidia_character_model: str = ""
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+    # "guided_json" (NIM's documented structured output) or "prompt" (schema in prompt, strict validation after).
+    nvidia_json_mode: str = "guided_json"
     openai_api_key: str = ""
     # Model used ONLY for character analysis. No default in code: the operator chooses it explicitly
     # (see .env.example) and nothing here ever switches models on its own.

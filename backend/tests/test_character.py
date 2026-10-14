@@ -25,7 +25,7 @@ from app.main import app
 from tests.conftest import auth
 from tests.fake_supabase import FakeSupabase
 
-CONSENT = "2026-10-v2"
+CONSENT = "2026-10-v3-none"  # tests run with AI_PROVIDER unset; the version is provider-specific
 TEXT = "She is warm and teasing with close friends, but quiet and careful around people she has just met."
 GOOD = {"summary": "Warm with friends, reserved with strangers.",
         "core_traits": [{"text": "Warm with close friends", "basis": "stated"}],
@@ -316,18 +316,19 @@ def test_old_consent_version_must_be_reaccepted(client: TestClient, analyzer: Fa
 def test_ready_reports_character_model_and_warns_about_the_old_name(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.main import create_app
 
+    monkeypatch.setenv("AI_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("OPENAI_CHAT_MODEL", "some-model")  # the retired name must NOT enable character analysis
     monkeypatch.delenv("OPENAI_CHARACTER_MODEL", raising=False)
     get_settings.cache_clear()
     body = TestClient(create_app()).get("/ready").json()
-    assert body["configured"]["openai"] is False
+    assert body["configured"]["ai"] is False
     assert any("OPENAI_CHARACTER_MODEL" in w for w in body["warnings"])
     assert "sk-test" not in json.dumps(body)
     monkeypatch.setenv("OPENAI_CHARACTER_MODEL", "gpt-6-luna")
     get_settings.cache_clear()
     body = TestClient(create_app()).get("/ready").json()
-    assert body["configured"]["openai"] is True and body["warnings"] == []
+    assert body["configured"]["ai"] is True and body["warnings"] == []
     get_settings.cache_clear()
 
 

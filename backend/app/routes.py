@@ -7,13 +7,14 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 
 from app.auth import AuthUser, current_user
 from app.character_store import character_view, get_profile_row
+from app.config import get_settings
+from app.providers import consent_version, provider_info
 from app.schemas import ConsentIn, OnboardingStep, ProfileIn, TwinIn
 from app.supabase_rest import SupabaseError, SupabaseRest, get_rest
 
 router = APIRouter(prefix="/api/v1")
 
-# v2: the text now covers sending character descriptions to an external AI provider for analysis.
-CONSENT_VERSION = "2026-10-v2"
+# Consent text and version are provider-specific (see app.providers.consent_version).
 BUCKET = "portraits"
 MAX_PORTRAIT_BYTES = 5 * 1024 * 1024
 UNAVAILABLE_STEPS = {
@@ -74,6 +75,7 @@ async def me(user: AuthUser = Depends(current_user), rest: SupabaseRest = Depend
         _active_consent(rest, user),
     )
     row = await get_profile_row(rest, user, twin["id"]) if twin else None
+    cv = consent_version(get_settings())
     return {
         "user_id": user.id,
         "profile": profile[0] if profile else None,
@@ -81,9 +83,10 @@ async def me(user: AuthUser = Depends(current_user), rest: SupabaseRest = Depend
         "character": character_view(twin, row) if twin else None,
         "completed_steps": sorted(s["step"] for s in steps),
         # Only a consent to the *current* wording counts. An older version must be re-accepted.
-        "ai_consent": {"granted": bool(consent and consent["version"] == CONSENT_VERSION),
+        "ai_consent": {"granted": bool(consent and consent["version"] == cv),
                        "version": consent["version"] if consent else None,
-                       "current_version": CONSENT_VERSION},
+                       "current_version": cv,
+                       "provider": provider_info(get_settings())},
     }
 
 
@@ -104,11 +107,19 @@ async def update_profile(
 async def grant_ai_consent(
     body: ConsentIn, user: AuthUser = Depends(current_user), rest: SupabaseRest = Depends(get_rest)
 ) -> dict[str, Any]:
-    if body.version != CONSENT_VERSION:
+    cv = consent_version(get_settings())
+    if body.version != cv:
         raise HTTPException(status.HTTP_409_CONFLICT, "Consent text has changed; please review it again.")
     existing = await _active_consent(rest, user)
-    if existing and existing["version"] == CONSENT_VERSION:
+    if existing and existing["version"] == cv:
         return existing
+    if existing:
+        # Agreeing to new wording (or a different AI provider) supersedes the older agreement.
+        await rest.update(
+            user.token, "consents",
+            {"user_id": _eq(user.id), "kind": "eq.ai_processing", "withdrawn_at": "is.null"},
+            {"withdrawn_at": datetime.now(timezone.utc).isoformat()},
+        )
     return await rest.insert(
         user.token, "consents", {"user_id": user.id, "kind": "ai_processing", "version": body.version}
     )
@@ -219,7 +230,7 @@ async def complete_step(
         raise HTTPException(status.HTTP_409_CONFLICT, UNAVAILABLE_STEPS[step])
     twin = await _twin(rest, user)
     consent = await _active_consent(rest, user) if step == "welcome" else None
-    if step == "welcome" and not (consent and consent["version"] == CONSENT_VERSION):
+    if step == "welcome" and not (consent and consent["version"] == consent_version(get_settings())):
         raise HTTPException(status.HTTP_409_CONFLICT, "Please accept AI processing to continue.")
     if step == "identity" and not (twin and twin.get("name")):
         raise HTTPException(status.HTTP_409_CONFLICT, "Save your twin's identity first.")

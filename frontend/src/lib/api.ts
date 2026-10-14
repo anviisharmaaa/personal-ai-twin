@@ -97,8 +97,19 @@ export type CharacterState = {
   profile: CharacterProfile | null;
   profile_version: number | null;
   generated_at: string | null;
+  /** Who made the stored interpretation. `is_sample` means a fixed example, not an AI reading. */
+  generated_by: { provider: string | null; model: string | null; is_sample: boolean } | null;
   /** Code of the most recent failed attempt, if it happened after the last good profile. */
   failure: string | null;
+};
+
+export type ProviderInfo = {
+  id: "nvidia" | "openai" | "mock" | "none";
+  label: string;
+  /** True when the description leaves Madhuora's server for a third party. */
+  external: boolean;
+  development_only: boolean;
+  disclosure: string[];
 };
 
 export type Me = {
@@ -107,5 +118,5 @@ export type Me = {
   twin: Twin | null;
   character: CharacterState | null;
   completed_steps: string[];
-  ai_consent: { granted: boolean; version: string | null; current_version: string };
+  ai_consent: { granted: boolean; version: string | null; current_version: string; provider: ProviderInfo };
 };

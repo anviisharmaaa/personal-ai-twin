@@ -15,7 +15,7 @@ export function useReady() {
     queryFn: async () => {
       const r = await fetch(`${config.apiUrl}/ready`);
       if (!r.ok) throw new Error("not ready");
-      return (await r.json()) as { configured?: { supabase?: boolean; openai?: boolean } };
+      return (await r.json()) as { ai_provider?: string; configured?: { supabase?: boolean; ai?: boolean } };
     },
     retry: false,
     staleTime: 60_000,

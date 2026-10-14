@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, type CharacterState, type Twin } from "../lib/api";
+import { ApiError, type CharacterState, type ProviderInfo, type Twin } from "../lib/api";
 import { useAnalyzeCharacter, useCompleteStep, useReady, useSaveCharacter } from "../hooks/useMe";
 import { CharacterProfileView } from "./CharacterProfileView";
 import { Button, Notice, TextArea } from "./ui";
@@ -30,13 +30,14 @@ type Props = {
   twin: Twin;
   character: CharacterState;
   consentGranted: boolean;
+  provider: ProviderInfo;
   mode: "studio" | "onboarding";
   onDirtyChange?: (dirty: boolean) => void;
   onContinue?: () => void;
   onSkip?: () => void;
 };
 
-export function CharacterEditor({ twin, character, consentGranted, mode, onDirtyChange, onContinue, onSkip }: Props) {
+export function CharacterEditor({ twin, character, consentGranted, provider, mode, onDirtyChange, onContinue, onSkip }: Props) {
   const baseline = twin.character_description;
   const [text, setText] = useState(baseline);
   const save = useSaveCharacter();
@@ -53,7 +54,7 @@ export function CharacterEditor({ twin, character, consentGranted, mode, onDirty
   const tooShort = trimmed.length < character.min_chars;
   useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
 
-  const aiOff = ready.data?.configured?.openai === false;
+  const aiOff = ready.data?.configured?.ai === false;
   const busy = save.isPending || analyze.isPending || complete.isPending;
 
   // Persist first; returns the version that was actually saved so analysis can't read a stale one.
@@ -140,6 +141,12 @@ export function CharacterEditor({ twin, character, consentGranted, mode, onDirty
         </div>
       </div>
 
+      {provider.external && provider.development_only && (
+        <div className="mt-4"><Notice>
+          <strong>Development AI provider ({provider.label}).</strong> Understanding a character sends your description
+          to a free test service. Use fictional or non-sensitive text only while this is active.
+        </Notice></div>
+      )}
       {why && <p className="mt-3 text-sm text-muted">{why}{!consentGranted && <> <Link className="underline" to="/app/settings">Open Settings</Link>.</>}</p>}
       {err && <div className="mt-4"><Notice tone="error">{err.message}{" "}
         {err instanceof ApiError && err.code === "consent_required" && <Link className="underline" to="/app/settings">Open Settings</Link>}
@@ -162,11 +169,18 @@ export function CharacterEditor({ twin, character, consentGranted, mode, onDirty
             <h3 className="text-lg font-semibold">What Madhuora understood</h3>
             <span className="text-sm text-muted">{STATUS[dirty && character.status === "current" ? "outdated" : character.status]}</span>
           </div>
-          <p className="mt-1 max-w-[62ch] text-sm text-muted">
-            An AI-generated interpretation of your words. It can be wrong or incomplete. Your own description
-            above stays the source of truth and is never replaced by this.
-            {character.generated_at && <> Generated {new Date(character.generated_at).toLocaleString()}.</>}
-          </p>
+          {character.generated_by?.is_sample ? (
+            <div className="mt-3"><Notice>
+              <strong>Sample output, not an AI reading.</strong> This server is in sample mode, so no AI model read
+              your description. The text below is a fixed example of how an interpretation will look.
+            </Notice></div>
+          ) : (
+            <p className="mt-1 max-w-[62ch] text-sm text-muted">
+              An AI-generated interpretation of your words{character.generated_by?.provider ? <>, made by {providerName(character.generated_by.provider)}{character.generated_by.model ? <> ({character.generated_by.model})</> : null}</> : null}.
+              It can be wrong or incomplete. Your own description above stays the source of truth and is never replaced by this.
+              {character.generated_at && <> Generated {new Date(character.generated_at).toLocaleString()}.</>}
+            </p>
+          )}
           {(character.status === "outdated" || (dirty && character.status === "current")) && (
             <div className="mt-4"><Notice>
               This was made from an earlier version of your description, so it may not reflect your latest changes.
@@ -180,6 +194,8 @@ export function CharacterEditor({ twin, character, consentGranted, mode, onDirty
   );
 }
 
+const providerName = (p: string) => ({ nvidia: "NVIDIA", openai: "OpenAI", mock: "the sample generator" } as Record<string, string>)[p] ?? p;
+
 function failureText(code: string): string {
   const base = "The last attempt to analyse this didn’t work";
   const m: Record<string, string> = {
@@ -188,6 +204,10 @@ function failureText(code: string): string {
     malformed_response: `${base}: the AI returned something unusable. Try again.`,
     truncated: `${base}: the answer was cut off. Try again.`,
     refused: `${base}: the AI declined this description.`,
+    quota_exhausted: `${base}: the free AI allowance is used up for now. Your description and previous interpretation are unchanged.`,
+    provider_auth: `${base}: the AI service rejected the server’s credentials. This needs fixing by whoever runs the server.`,
+    provider_unreachable: `${base}: the AI service couldn’t be reached. Your previous interpretation is unchanged.`,
+    provider_rejected: `${base}: the AI service rejected the request. This needs fixing by whoever runs the server.`,
   };
   return m[code] ?? `${base}. Your previous interpretation is unchanged. You can retry.`;
 }

@@ -5,10 +5,11 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.auth import AuthUser, current_user
-from app.character import MIN_DESCRIPTION_CHARS, SCHEMA_VERSION, AnalysisError, CharacterAnalyzer, OpenAIAnalyzer
-from app.character_store import character_view, get_profile_row, sha256
+from app.character import MIN_DESCRIPTION_CHARS, SCHEMA_VERSION, AnalysisError, CharacterAnalyzer
+from app.character_store import character_view, get_profile_row, qualified_model, sha256, stored_provider
 from app.config import get_settings
-from app.routes import CONSENT_VERSION, _active_consent, _eq, _twin, _with_portrait_url
+from app.providers import build_analyzer, consent_version, provider_model
+from app.routes import _active_consent, _eq, _twin, _with_portrait_url
 from app.schemas import AnalyzeIn, CharacterIn
 from app.supabase_rest import SupabaseError, SupabaseRest, get_rest
 
@@ -21,9 +22,8 @@ _in_flight: set[str] = set()
 
 
 def get_analyzer() -> CharacterAnalyzer:
-    s = get_settings()
-    return OpenAIAnalyzer(s.openai_api_key, s.openai_character_model, s.analysis_timeout_seconds,
-                          s.analysis_max_output_tokens)
+    """The one explicitly configured provider (AI_PROVIDER). Never falls back to another one."""
+    return build_analyzer(get_settings())  # type: ignore[no-any-return]
 
 
 def _err(code: str, message: str, http: int) -> HTTPException:
@@ -107,7 +107,7 @@ async def analyze_character(
 
     # Consent first: nothing personal goes to an external provider without a current, un-withdrawn consent.
     consent = await _active_consent(rest, user)
-    if consent is None or consent.get("version") != CONSENT_VERSION:
+    if consent is None or consent.get("version") != consent_version(settings):
         raise _err("consent_required", "Please accept AI processing in Settings before analysing a character.",
                    status.HTTP_403_FORBIDDEN)
     if not settings.ai_enabled:
@@ -126,9 +126,11 @@ async def analyze_character(
 
     row = await get_profile_row(rest, user, twin["id"])
     digest = sha256(description)
+    provider = getattr(analyzer, "provider", "") or ""
     if row and row.get("profile") is not None and row.get("description_sha256") == digest \
-            and row.get("schema_version") == SCHEMA_VERSION:
-        # Identical, unchanged description: no new model call.
+            and row.get("schema_version") == SCHEMA_VERSION and stored_provider(row) == provider:
+        # Identical, unchanged description made by the same provider: no new model call. (A profile from a
+        # different provider, e.g. a sample, is never reused as if it came from this one.)
         return {"character": character_view(twin, row), "cached": True}
 
     if twin["id"] in _in_flight:
@@ -142,7 +144,7 @@ async def analyze_character(
         try:
             result = await analyzer.analyze(description)
         except AnalysisError as exc:
-            await _record_usage(rest, user, False, settings.openai_character_model or None, None, None, None)
+            await _record_usage(rest, user, False, provider_model(settings), None, None, None)
             await _record_failure(rest, user, twin["id"], exc.code, row)
             raise _err(exc.code, exc.message, exc.status_code) from exc
         await _record_usage(rest, user, True, result.model, result.input_tokens, result.output_tokens,
@@ -151,7 +153,8 @@ async def analyze_character(
         now = datetime.now(timezone.utc).isoformat()
         fields = {
             "profile": result.profile.model_dump(), "description_version": version, "description_sha256": digest,
-            "schema_version": SCHEMA_VERSION, "model": result.model, "generated_at": now,
+            "schema_version": SCHEMA_VERSION, "model": qualified_model(result.provider, result.model),
+            "generated_at": now,
             "last_failure_code": None, "last_failure_at": None, "updated_at": now,
         }
         latest = await get_profile_row(rest, user, twin["id"])

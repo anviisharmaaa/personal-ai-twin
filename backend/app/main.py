@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 
 from app.character_routes import router as character_router
 from app.config import get_settings
+from app.providers import active_provider, provider_ready
 from app.routes import router
 from app.supabase_rest import SupabaseError
 
@@ -39,12 +40,18 @@ def create_app() -> FastAPI:
         warnings: list[str] = []
         if settings.openai_chat_model and not settings.openai_character_model:
             warnings.append("OPENAI_CHAT_MODEL is not used for character analysis. Set OPENAI_CHARACTER_MODEL.")
+        chosen = settings.ai_provider.strip().lower()
+        if chosen and not active_provider(settings):
+            warnings.append("AI_PROVIDER is not valid (use nvidia, openai or mock; mock is refused in production).")
+        if not chosen and (settings.openai_api_key or settings.nvidia_api_key):
+            warnings.append("An AI key is set but AI_PROVIDER is empty, so AI analysis is off. Set AI_PROVIDER.")
         return {
             "status": "ok",
             "warnings": warnings,
+            "ai_provider": active_provider(settings) or "none",
             "configured": {
                 "supabase": bool(settings.supabase_url and settings.supabase_publishable_key),
-                "openai": bool(settings.openai_api_key and settings.openai_character_model),
+                "ai": provider_ready(settings),
             },
         }
 

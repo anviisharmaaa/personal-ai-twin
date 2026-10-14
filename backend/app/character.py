@@ -5,6 +5,7 @@ separately and can always be regenerated. Nothing in this module logs or persist
 """
 
 import json
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
@@ -135,10 +136,14 @@ class AnalysisResult:
     latency_ms: int
     reasoning_tokens: int | None = None
     finish_reason: str | None = None
+    # Which provider produced this ("openai", "nvidia", "mock"). Stored with the profile so a sample
+    # (mock) result can never be mistaken for a real AI result, and so switching providers re-analyses.
+    provider: str = ""
 
 
 class CharacterAnalyzer(Protocol):
-    """Replaceable provider boundary. The OpenAI implementation below is the only real one."""
+    """Replaceable provider boundary. Implementations: OpenAIAnalyzer (below), and in app.providers the
+    NvidiaAnalyzer, the MockAnalyzer (sample output, no network) and the NullAnalyzer (not configured)."""
 
     @property
     def configured(self) -> bool: ...
@@ -146,9 +151,21 @@ class CharacterAnalyzer(Protocol):
     async def analyze(self, description: str) -> AnalysisResult: ...
 
 
+_THINK = re.compile(r"^\s*<think>.*?</think>\s*", re.S)
+_FENCE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.S)
+
+
+def _unwrap(raw: str) -> str:
+    """Remove a leading <think>…</think> block or a ```json fence, which some hosted models add around
+    otherwise valid JSON. Nothing else is repaired: anything still not valid JSON is rejected."""
+    raw = _THINK.sub("", raw, count=1)
+    m = _FENCE.match(raw)
+    return m.group(1) if m else raw
+
+
 def parse_profile(raw: str) -> CharacterProfile:
     try:
-        return CharacterProfile.model_validate(json.loads(raw))
+        return CharacterProfile.model_validate(json.loads(_unwrap(raw)))
     except (json.JSONDecodeError, ValidationError, TypeError) as exc:
         raise AnalysisError(
             "malformed_response", "The AI returned something we couldn't use. Please try again."
@@ -166,11 +183,13 @@ def _provider_detail(res: httpx.Response) -> str | None:
 
 
 class OpenAIAnalyzer:
-    """Calls OpenAI Chat Completions with a strict JSON schema. Server-side only; key never leaves here.
+    """Calls an OpenAI-style Chat Completions endpoint. Server-side only; the key never leaves here.
 
-    The model id comes only from configuration. Nothing here chooses or changes it.
+    The model id comes only from configuration. Nothing here chooses or changes it. Subclasses (NVIDIA)
+    override only the request shape and the endpoint, so retry/error/parse behaviour is shared and tested once.
     """
 
+    PROVIDER = "openai"
     URL = "https://api.openai.com/v1/chat/completions"
 
     def __init__(self, api_key: str, model: str, timeout_s: float, max_output_tokens: int,
@@ -182,13 +201,15 @@ class OpenAIAnalyzer:
         self._transport = transport
 
     @property
+    def provider(self) -> str:
+        return self.PROVIDER
+
+    @property
     def configured(self) -> bool:
         return bool(self._key and self._model)
 
-    async def analyze(self, description: str) -> AnalysisResult:
-        if not self.configured:
-            raise AnalysisError("not_configured", "AI analysis isn't set up on the server yet.", 503)
-        payload = {
+    def _payload(self, description: str) -> dict[str, Any]:
+        return {
             "model": self._model,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -200,9 +221,15 @@ class OpenAIAnalyzer:
             },
             "max_completion_tokens": self._max_out,
         }
+
+    async def analyze(self, description: str) -> AnalysisResult:
+        if not self.configured:
+            raise AnalysisError("not_configured", "AI analysis isn't set up on the server yet.", 503)
+        payload = self._payload(description)
         started = time.monotonic()
         data: dict[str, Any] | None = None
-        # One retry, only for transient failures. Never for malformed output (it would just cost again).
+        # One retry, only for transient failures. Never for malformed output (it would just cost again),
+        # and never after a rate-limit or quota response.
         for attempt in (1, 2):
             try:
                 async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client:
@@ -216,22 +243,30 @@ class OpenAIAnalyzer:
                     raise AnalysisError("provider_unreachable", "We couldn't reach the AI service.", 502) from exc
                 continue
             if res.status_code == 429:
-                raise AnalysisError("rate_limited", "The AI service is busy. Please try again in a moment.", 429,
+                raise AnalysisError("rate_limited", "The AI service is busy or its limit was reached. "
+                                    "Please try again later.", 429, _provider_detail(res))
+            if res.status_code == 402:
+                raise AnalysisError("quota_exhausted", "The AI service's free allowance is used up for now.", 503,
                                     _provider_detail(res))
             if res.status_code in (401, 403):
                 raise AnalysisError("provider_auth", "The AI service rejected our credentials.", 502,
                                     _provider_detail(res))
-            if res.status_code == 404 or res.status_code == 400:
+            if res.status_code in (400, 404, 422):
                 # Bad model id or unsupported parameter. Not retryable; do not echo provider text (may be verbose).
                 raise AnalysisError("provider_rejected", "The configured AI model rejected the request.", 502,
                                     _provider_detail(res))
             if res.status_code >= 500:
                 if attempt == 2:
-                    raise AnalysisError("provider_error", "The AI service had a problem. Please try again.", 502)
+                    raise AnalysisError("provider_error", "The AI service had a problem. Please try again.", 502,
+                                        f"http={res.status_code}")
                 continue
             if res.status_code != 200:
-                raise AnalysisError("provider_error", "The AI service had a problem. Please try again.", 502)
-            data = res.json()
+                raise AnalysisError("provider_error", "The AI service had a problem. Please try again.", 502,
+                                    f"http={res.status_code}")
+            try:
+                data = res.json()
+            except ValueError as exc:
+                raise AnalysisError("malformed_response", "The AI returned something we couldn't use.", 502) from exc
             break
         assert data is not None
         try:
@@ -254,4 +289,5 @@ class OpenAIAnalyzer:
             latency_ms=int((time.monotonic() - started) * 1000),
             reasoning_tokens=(usage.get("completion_tokens_details") or {}).get("reasoning_tokens"),
             finish_reason=choice.get("finish_reason"),
+            provider=self.PROVIDER,
         )

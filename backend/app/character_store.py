@@ -13,6 +13,22 @@ def sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def qualified_model(provider: str, model: str) -> str:
+    """Stored in the existing `model` column as "<provider>:<model>" so no schema change is needed."""
+    return f"{provider}:{model}" if provider else model
+
+
+def split_model(stored: str | None) -> tuple[str, str | None]:
+    if not stored:
+        return "", None
+    head, sep, tail = stored.partition(":")
+    return (head, tail) if sep and head in ("nvidia", "openai", "mock") else ("", stored)
+
+
+def stored_provider(row: dict[str, Any]) -> str:
+    return split_model(row.get("model"))[0]
+
+
 def _ts(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -64,5 +80,11 @@ def character_view(twin: dict[str, Any], row: dict[str, Any] | None) -> dict[str
         "profile": profile,
         "profile_version": row.get("description_version") if row and profile is not None else None,
         "generated_at": row.get("generated_at") if row and profile is not None else None,
+        "generated_by": _generated_by(row) if row and profile is not None else None,
         "failure": failure,
     }
+
+
+def _generated_by(row: dict[str, Any]) -> dict[str, Any]:
+    provider, model = split_model(row.get("model"))
+    return {"provider": provider or None, "model": model, "is_sample": provider == "mock"}

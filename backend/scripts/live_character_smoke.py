@@ -1,12 +1,20 @@
-"""LIVE check of character analysis against the real OpenAI API. NOT part of the mocked test suite.
+"""LIVE check of character analysis against a real provider. NOT part of the mocked test suite.
 
-Run from the backend folder, with your venv active and OPENAI_API_KEY + OPENAI_CHARACTER_MODEL in backend/.env:
+The provider is the one you explicitly configured in backend/.env (AI_PROVIDER=nvidia or openai). Nothing is
+chosen for you and nothing falls back. For NVIDIA (free development endpoint) you need:
+
+    AI_PROVIDER=nvidia
+    NVIDIA_API_KEY=...                       (type it into the file only; never into chat)
+    NVIDIA_CHARACTER_MODEL=nvidia/nemotron-3-super-120b-a12b
+
+Run from the backend folder, with your venv active:
 
     python -m scripts.live_character_smoke            # access check + ONE smoke analysis + error-handling checks
     python -m scripts.live_character_smoke --eval     # also runs the description evaluation set (8 calls)
 
-It sends only the fictional, non-sensitive sample descriptions defined below. It never prints the API key.
-Full results are written to scripts/out/ (git-ignored) so you can read exactly what the model returned.
+It sends only the fictional, synthetic descriptions defined below, never anything from your database. It never
+prints an API key. Full results are written to scripts/out/ (git-ignored) so you can read exactly what the
+model returned. Which checks are LIVE and which are only covered by the mocked suite is printed explicitly.
 """
 
 import argparse
@@ -21,7 +29,8 @@ from pathlib import Path
 import httpx
 
 from app.character import AnalysisError, AnalysisResult, OpenAIAnalyzer
-from app.config import get_settings
+from app.config import Settings, get_settings
+from app.providers import NvidiaAnalyzer, build_analyzer
 
 # Pricing as listed on OpenAI's official model catalogue on 2026-10-14. Re-check before relying on it.
 PRICE_IN_PER_MTOK = 0.10
@@ -73,8 +82,12 @@ SENSITIVE = re.compile(
 )
 
 
+PROVIDER = "openai"  # set in main() from AI_PROVIDER
+
+
 def cost_usd(inp: int | None, out: int | None) -> float | None:
-    if inp is None or out is None:
+    # Only OpenAI has a per-token price here. NVIDIA's free endpoint is credit/rate limited, not priced per token.
+    if PROVIDER != "openai" or inp is None or out is None:
         return None
     return inp / 1e6 * PRICE_IN_PER_MTOK + out / 1e6 * PRICE_OUT_PER_MTOK
 
@@ -132,40 +145,70 @@ async def run_one(analyzer: OpenAIAnalyzer, text: str) -> tuple[AnalysisResult |
 
 def fmt_usage(r: AnalysisResult) -> str:
     c = cost_usd(r.input_tokens, r.output_tokens)
-    return (f"latency={r.latency_ms}ms in={r.input_tokens} out={r.output_tokens} reasoning={r.reasoning_tokens} "
-            f"finish={r.finish_reason} est_cost=${c:.5f}" if c is not None else f"latency={r.latency_ms}ms usage=unavailable")
+    base = (f"latency={r.latency_ms}ms in={r.input_tokens} out={r.output_tokens} reasoning={r.reasoning_tokens} "
+            f"finish={r.finish_reason}")
+    return base + (f" est_cost=${c:.5f}" if c is not None else " cost=free-tier (no per-token price)")
+
+
+async def access_check(s: Settings) -> tuple[int, str]:
+    """Free check that this key can see this model. Returns (http status, note). Uses no generation tokens."""
+    if PROVIDER == "openai":
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.get(f"https://api.openai.com/v1/models/{s.openai_character_model}",
+                            headers={"Authorization": f"Bearer {s.openai_api_key}"})
+        return r.status_code, ""
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.get(s.nvidia_base_url.rstrip("/") + "/models", headers={"Authorization": f"Bearer {s.nvidia_api_key}"})
+    if r.status_code != 200:
+        return r.status_code, ""
+    try:
+        ids = {m.get("id") for m in r.json().get("data", [])}
+    except ValueError:
+        return 200, "model list not readable; relying on the smoke call below"
+    if s.nvidia_character_model in ids:
+        return 200, "model is in the account's model list"
+    return 404, f"model id not in the list of {len(ids)} models this key sees"
 
 
 async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--eval", action="store_true", help="also run the 8-description evaluation set")
     args = ap.parse_args()
+    global PROVIDER
     s = get_settings()
-    print("LIVE TEST (real OpenAI calls). Not the mocked test suite.")
-    print(f"  OPENAI_API_KEY set: {bool(s.openai_api_key)}   OPENAI_CHARACTER_MODEL: {s.openai_character_model or '(not set)'}")
-    if not (s.openai_api_key and s.openai_character_model):
-        print("Set OPENAI_API_KEY and OPENAI_CHARACTER_MODEL in backend/.env first.")
+    PROVIDER = s.ai_provider.strip().lower()
+    if PROVIDER not in ("nvidia", "openai"):
+        print("Set AI_PROVIDER=nvidia (or openai) in backend/.env. This live test never guesses the provider, and "
+              "'mock' is not a live provider.")
         return 2
-    report: dict = {"started": datetime.now(timezone.utc).isoformat(), "model": s.openai_character_model, "steps": {}}  # type: ignore[type-arg]
+    key = s.nvidia_api_key if PROVIDER == "nvidia" else s.openai_api_key
+    model = s.nvidia_character_model if PROVIDER == "nvidia" else s.openai_character_model
+    print(f"LIVE TEST (real {PROVIDER.upper()} calls with fictional text). Not the mocked test suite.")
+    print(f"  AI_PROVIDER={PROVIDER}   key set: {bool(key)}   model: {model or '(not set)'}")
+    if not (key and model):
+        print(f"Set the {PROVIDER.upper()}_API_KEY and {PROVIDER.upper()}_CHARACTER_MODEL lines in backend/.env first.")
+        return 2
+    report: dict = {"started": datetime.now(timezone.utc).isoformat(), "provider": PROVIDER, "model": model, "steps": {}}  # type: ignore[type-arg]
     outdir = Path(__file__).parent / "out"
     outdir.mkdir(exist_ok=True)
     failures = 0
 
     # 0. Access check: does this key see this model? (free; no tokens used)
-    async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.get(f"https://api.openai.com/v1/models/{s.openai_character_model}",
-                        headers={"Authorization": f"Bearer {s.openai_api_key}"})
-    print(f"\n[0] Model access check: HTTP {r.status_code}")
-    report["steps"]["access"] = r.status_code
-    if r.status_code != 200:
-        print("    The key cannot see this model (or the key is invalid). Stopping.")
+    try:
+        status_code, note = await access_check(s)
+    except httpx.HTTPError as exc:
+        print(f"\n[0] Model access check: could not reach the provider ({type(exc).__name__}). Stopping.")
+        return 1
+    print(f"\n[0] Authentication / model availability: HTTP {status_code} {note}")
+    report["steps"]["access"] = {"status": status_code, "note": note}
+    if status_code != 200:
+        print("    The key cannot see this model, or the key is invalid, or the listing endpoint differs. Stopping.")
         return 1
 
-    analyzer = OpenAIAnalyzer(s.openai_api_key, s.openai_character_model, s.analysis_timeout_seconds,
-                              s.analysis_max_output_tokens)
+    analyzer = build_analyzer(s)
 
     # 1. Smoke test: one real structured analysis.
-    print("\n[1] Smoke test: one real analysis of a fictional description")
+    print(f"\n[1] Smoke test: one real {PROVIDER} analysis of a fictional description")
     res, err, wall = await run_one(analyzer, SMOKE)
     if err or not res:
         failures += 1
@@ -179,10 +222,16 @@ async def main() -> int:
         report["steps"]["smoke"] = {"ok": True, "usage": fmt_usage(res), "profile": res.profile.model_dump()}
 
     # 2. Error handling, with deliberately wrong values (no tokens are used).
-    print("\n[2] Error handling with deliberately wrong credentials/model")
+    print("\n[2] Error handling with deliberately wrong credentials/model (LIVE)")
+
+    def variant(k: str, m: str) -> OpenAIAnalyzer:
+        if PROVIDER == "nvidia":
+            return NvidiaAnalyzer(k, m, 30, 200, s.nvidia_base_url, s.nvidia_json_mode)
+        return OpenAIAnalyzer(k, m, 30, 200)
+
     for label, a, expect in [
-        ("invalid key", OpenAIAnalyzer("sk-invalid-test-key", s.openai_character_model, 30, 200), "provider_auth"),
-        ("unknown model", OpenAIAnalyzer(s.openai_api_key, "model-that-does-not-exist-xyz", 30, 200), "provider_rejected"),
+        ("invalid key", variant("invalid-test-key", model), "provider_auth"),
+        ("unknown model", variant(key, "model-that-does-not-exist-xyz"), "provider_rejected"),
     ]:
         _, e, _ = await run_one(a, SMOKE)
         got = e.code if e else "no error"
@@ -190,17 +239,24 @@ async def main() -> int:
         failures += 0 if ok else 1
         print(f"    {label}: expected {expect}, got {got}  -> {'PASS' if ok else 'FAIL'}   (provider: {e.detail if e else ''})")
         report["steps"][f"error_{label}"] = {"expected": expect, "got": got}
+    print("    rate limit (429), malformed output, timeout: NOT exercised live (cannot be forced safely without")
+    print("    burning quota). They are covered only by the MOCKED suite: pytest tests/test_providers.py")
+    report["steps"]["not_exercised_live"] = ["rate_limited", "malformed_response", "timeout"]
 
     # 3. Optional evaluation set.
     if args.eval and not failures:
         print("\n[3] Evaluation set (8 real calls). Automatic checks only; READ the written output for quality.")
-        results = {}
+        results: dict[str, object] = {}
         for name, text in CASES.items():
+            await asyncio.sleep(2)  # stay well under free-tier request-per-minute limits
             res, err, wall = await run_one(analyzer, text)
             if err or not res:
                 print(f"  - {name}: ERROR code={err.code if err else '?'} {err.detail if err else ''}")
                 results[name] = {"error": err.code if err else "unknown"}
                 failures += 1
+                if err and err.code in ("rate_limited", "quota_exhausted"):
+                    print("    Stopping the evaluation: do not hammer a rate-limited or exhausted free endpoint.")
+                    break
                 continue
             prof = res.profile.model_dump()
             cks = checks(name, text, prof)

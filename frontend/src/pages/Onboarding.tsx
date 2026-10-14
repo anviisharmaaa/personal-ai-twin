@@ -94,12 +94,17 @@ function Welcome({ onDone }: { onDone: () => void }) {
       <ul className="mt-4 space-y-3 text-sm">
         <li><strong>Your twin is an AI representation.</strong> It is clearly labelled as one. It is not you, doesn’t have your experiences or consciousness, and never claims to.</li>
         <li><strong>Your data is stored in Mumbai</strong> (India) with our database provider, and encrypted in transit. We do not claim end-to-end encryption.</li>
-        <li><strong>An AI provider reads what you write about your twin</strong> (currently OpenAI, which processes data outside India). When you ask Madhuora to understand a character, the description you wrote is sent to it to produce an interpretation. Nothing is sent until you ask, and chat isn’t live yet.</li>
+        <li><strong>AI provider on this server: {consent.provider.label}.</strong>
+          <ul className="mt-2 list-disc space-y-2 pl-5 text-muted">
+            {consent.provider.disclosure.map((d) => <li key={d}>{d}</li>)}
+          </ul>
+          {consent.provider.external && <span className="mt-2 block text-muted">Nothing is sent until you ask Madhuora to understand a character, and chat isn’t live yet.</span>}
+        </li>
         <li><strong>You’re in control.</strong> You can withdraw this consent any time in Settings. Nothing is remembered long-term without your approval.</li>
       </ul>
       <label className="mt-6 flex items-start gap-3 text-sm">
         <input type="checkbox" className="mt-1 size-4" checked={agree} disabled={consent.granted} onChange={(e) => setAgree(e.target.checked)} />
-        <span>I understand, and I agree to my twin’s information being processed by an external AI provider for the purposes above.{consent.granted && <span className="text-success"> Recorded (v{consent.version}).</span>}</span>
+        <span>I understand, and I agree to the above.{consent.granted && <span className="text-success"> Recorded (v{consent.version}).</span>}</span>
       </label>
       {err && <div className="mt-4"><Notice tone="error">{err}</Notice></div>}
       <div className="mt-6 flex justify-end"><Button size="lg" disabled={!agree} loading={grant.isPending || complete.isPending} onClick={go}>Agree and continue</Button></div>
@@ -152,7 +157,7 @@ function CharacterStep({ onDone }: { onDone: () => void }) {
   if (!twin || !character) return <Card><Notice>Create your twin’s identity first.</Notice></Card>;
   return (
     <Card>
-      <CharacterEditor twin={twin} character={character} consentGranted={ai_consent.granted} mode="onboarding" onContinue={onDone} onSkip={onDone} />
+      <CharacterEditor twin={twin} character={character} consentGranted={ai_consent.granted} provider={ai_consent.provider} mode="onboarding" onContinue={onDone} onSkip={onDone} />
     </Card>
   );
 }
