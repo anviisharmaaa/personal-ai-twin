@@ -112,7 +112,10 @@ def test_contradictory_contexts_are_both_preserved_with_their_own_evidence() -> 
                 "can go days without answering messages, even from people she loves")
     out, adj = ground(prof(core_traits=[item("Generous with money"), item("Stingy with time")],
                            context_tendencies=[money, time_]), ISHA)
-    assert len(out.context_tendencies) == 2 and len(out.core_traits) == 2 and adj.tendencies_dropped == 0
+    # Both sides survive. "Generous with money" only restated the evidence-backed Money tendency, so that copy goes.
+    assert len(out.context_tendencies) == 2 and adj.tendencies_dropped == 0
+    assert [i.text for i in out.core_traits] == ["Stingy with time"] and adj.near_duplicates == 1
+    assert "Generous" in out.context_tendencies[0].tendency
 
 
 # ---- sparse input -------------------------------------------------------------------------------------------

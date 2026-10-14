@@ -46,3 +46,45 @@ The validator proves *traceability and bounds*, not meaning. It cannot tell whet
 tendency written next to it, whether wording is subtly embellished, whether a contradiction is faithfully preserved, or
 whether guidance is sensible. The sensitive-term lists are deliberately narrow and will miss paraphrased inferences.
 Those remain **human-review** items. Do not treat passing tests as proof that interpretation quality is good.
+
+## Second evaluation (`live_20261014_191748.json`): repetition
+
+The raw-output check failed for four cases (`rich_contextual` 10 duplicates + 1 tendency, `sparse` 1 duplicate +
+3 trimmed, `stated_sensitive` 5, `long` 2). Grounding, sensitive-attribute, exact-phrase, injection and contradiction
+checks passed; the saved profiles were safe. The failures were repetition, not invention.
+
+**Diagnosis.** That file kept only the *final* profiles, so the removed entries were not saved. What can be said:
+the validator then only removed text that was identical after normalisation, so every one of the 10 / 1 / 5 / 2
+removed entries was an **exact repetition** (the same string in two sections). The cleaned profiles still held many
+**reworded repetitions** the old validator could not see: "Teases her closest friends constantly" in
+`warmth_and_expressiveness`, `relationships_and_social` *and* a context tendency; "Loves long walks, filter coffee,
+and old Hindi film songs" as one trait and again as three interests; every situational behaviour (grandfather,
+work, weddings, strangers) restated as a trait. A smaller group is **legitimate related observations** (for example
+"Shows care by turning up with food" and the same with "instead of saying 'I love you'") and stays. The missing
+space in `shortnessin those situations` is not in the data: the saved summary has a normal space, and no invisible or
+odd character exists anywhere in the file. It is a terminal soft-wrap/copy artefact. The console now prints the summary
+pre-wrapped, and tests pin that parsing and grounding never touch internal whitespace.
+
+**Changes.**
+- Prompt: one fact, one place; every entry must add something new; no restated examples; one sentence of the source is
+  one entry; situational behaviour lives in `context_tendencies` only; empty lists are normal; guidance may not just
+  restate a trait; each uncertainty is a different question. Rich descriptions are still asked to keep every distinct detail.
+- Validator: after exact duplicates, an entry is removed only when another entry already says *all* of it (its content
+  words, lightly stemmed, are contained in the other's) and the other adds no negation, number or opposite attitude.
+  Items are compared across sections and against evidence-backed tendencies (a tendency without real evidence is
+  dropped first and never justifies removing anything). Guidance and uncertainties are compared only with their own
+  kind. Entries that share wording but differ ("Loves loud parties" / "Hates loud parties", other person, other
+  setting, other number) both stay. Nothing is rewritten and no replacement text is ever invented.
+- Evaluator: checks are tiered (critical / raw / quality / format). Raw-output cleanup is still a FAIL, now with
+  `exact_duplicates` and `near_duplicates` shown separately; nothing is excluded or re-scored. The results file now
+  also stores the model's raw output and every removed entry (with reason and the entry that covers it) so a failure is
+  diagnosable offline. These live only in the local git-ignored file; the API and database never see them.
+
+**Offline result on the saved run** (`--rescore`; cleaned profiles, so *not* the original raw counts): no critical
+failure; the new rules would additionally remove 5 / 14 / 7 reworded repeats (smoke / rich_contextual / long); every
+removal was read and is the same observation reworded or contained in a longer entry. Reworded repeats that share
+only part of the wording (food example) are not detected and are listed under QUALITY for a human.
+
+**Not proven.** Whether the new prompt makes the model repeat less is untested until a live run. The validator removes
+repetition; it cannot judge that a quote supports a tendency, that wording is not embellished, or that guidance is
+sensible (for example the tautological "Respond in a quiet manner, reflecting Dev's quiet nature").

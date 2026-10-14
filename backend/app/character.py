@@ -130,18 +130,28 @@ apparent contradiction by picking a side.
 - Anything true only in a particular setting, with a particular person, or only for now (a recent mood or phase) \
 belongs in context_tendencies, or must use basis "context_dependent". Do not put it in core_traits or speaking_style \
 as if it were permanent.
-- Match the size of the output to the evidence. A description of under 20 words is sparse: return at most 6 entries \
-in total across all lists, at most 3 uncertainties and at most 1 behavioural_guidance. For richer descriptions, be \
-as detailed as the text supports. Never fill a section just because it exists, never use generic personality \
-stereotypes, and never state the same fact in two places.
+- One fact, one place. Before writing an entry, check that no earlier entry in ANY list already says it. Every entry \
+must add something new: a different behaviour, person, setting or example. Do not repeat a trait in several lists \
+unless each list gives different information about it. Do not restate the same example in different words, and do \
+not split one sentence of the description into several entries (three interests named in one line are ONE entry). \
+Choose the single best home: a behaviour that only happens with one person or in one setting goes in \
+context_tendencies ONLY, not again as a trait, speaking_style, warmth or relationship entry; a general trait goes in \
+the one list where it fits best.
+- Keep the profile small and driven by evidence. Never fill a list just because it exists; empty lists are normal. \
+Do not use generic personality stereotypes. A description of under 20 words is sparse: return at most 6 entries in \
+total across all lists, at most 3 uncertainties and at most 1 behavioural_guidance. For a richer description, keep \
+every distinct detail and nuance the text supports (different people, settings, habits, contradictions) rather than \
+shortening, but say each one once.
 - Do not diagnose, label mental or physical health conditions, or infer religion, politics, sexuality, ethnicity or \
 similar sensitive attributes. If the description itself states one, you may restate it in its own terms and mark it \
 "stated". Never name a specific religion or identity the description does not name, even when a practice might suggest \
 one.
 - Write plain, warm, specific English in the third person, keeping any quoted phrases in their original language.
-- "summary" is 2-4 sentences. "behavioural_guidance" is short, reusable guidance for how an AI representation \
-of this person should respond, grounded in the description; it must not add needs or causes the description does \
-not give. "uncertainties" lists what is ambiguous or missing: separate short entries, at most 5.
+- "summary" is 2-4 sentences and may not just repeat the lists. "behavioural_guidance" is short, reusable guidance \
+for how an AI representation of this person should respond, grounded in the description; each line must give a \
+different instruction, must not merely restate a trait ("be quiet because they are quiet"), and must not add needs \
+or causes the description does not give. "uncertainties" lists what is genuinely ambiguous or missing: separate \
+short entries, each a different question, at most 5; do not list an area the description already covers.
 - Return only JSON matching the schema."""
 
 
@@ -172,6 +182,10 @@ class AnalysisResult:
     provider: str = ""
     # Counts of what grounding had to remove from the model's raw output (empty = nothing, or not applicable).
     adjustments: dict[str, int] = field(default_factory=dict)
+    # FOR THE OPERATOR'S EVALUATION SCRIPT ONLY, held in memory for the length of one request: the model's output
+    # before grounding and what grounding removed (with text). Never logged, never stored, never sent to a browser.
+    raw_profile: dict[str, Any] | None = None
+    removed: list[dict[str, str]] = field(default_factory=list)
 
 
 class CharacterAnalyzer(Protocol):
@@ -320,6 +334,8 @@ class OpenAIAnalyzer:
         return AnalysisResult(
             profile=profile,
             adjustments=adj.as_dict(),
+            raw_profile=raw.model_dump(),
+            removed=adj.removed,
             model=str(data.get("model") or self._model),
             input_tokens=usage.get("prompt_tokens"),
             output_tokens=usage.get("completion_tokens"),

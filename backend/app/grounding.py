@@ -5,7 +5,8 @@ Rules of this module:
   entries over a sparse-input budget). It never writes, rewrites or "repairs" text.
 - If what is left would be mostly ungrounded, or a sensitive attribute was introduced that the description does
   not support, the whole profile is REJECTED (AnalysisError "quality_failed"); the caller keeps the last good one.
-- It never logs or returns content, only counts.
+- It never logs content, only counts. `Adjustments.removed` keeps what was removed IN MEMORY ONLY, for the
+  operator's evaluation script; it is never logged, never stored and never part of `as_dict()`.
 """
 
 import logging
@@ -86,6 +87,62 @@ def sensitive_violations(output_text: str, description: str) -> list[str]:
     return out
 
 
+
+# --- duplicate detection --------------------------------------------------------------------------------------
+# Two entries are treated as the same observation only when ONE of them says nothing the other does not already
+# say: its content words (after light normalisation) are all contained in the other's. Entries that merely share
+# wording, but each add a word (another person, setting, number, or an opposite attitude), both stay. The saved
+# description and the surviving entries are never edited; this only decides which entry to remove.
+_STOP = frozenset((
+    "a an the and or but of to in on at by for with from into onto over under around about as is are was were be been "
+    "being am it its this that these those she he her his hers him they them their theirs we us our you your i me my "
+    "herself himself themselves who whom which when while then than so very quite also just too does do did has have "
+    "had will would can could may might shall should often usually generally tends tend always go goes goe").split())
+# Words that change what a sentence MEANS. They are kept as tokens and must match between two entries.
+_NEGATIONS = frozenset(("not", "no", "never", "without", "cannot", "nor", "n't", "neither", "hardly", "rarely"))
+_POSITIVE = frozenset(("love", "like", "enjoy", "adore", "relish"))
+_NEGATIVE = frozenset(("hate", "dislike", "detest", "resent", "loathe"))
+_NUMBERS = frozenset(("one two three four five six seven eight nine ten once twice thrice half double "
+                      "first second third").split())
+_WORD = re.compile(r"[\w']+", re.UNICODE)
+
+
+def _stem(w: str) -> str:
+    for suffix, repl in (("ily", "y"), ("ing", ""), ("edly", ""), ("ed", ""), ("es", ""), ("s", "")):
+        if w.endswith(suffix) and len(w) - len(suffix) >= 3:
+            w = w[: -len(suffix)] + repl
+            break
+    return w[:-1] if len(w) > 3 and w.endswith("e") else w
+
+
+def _tokens(text: str) -> frozenset[str]:
+    """Content words of an entry; the polarity of love/hate-type verbs and negations are kept as markers."""
+    out: set[str] = set()
+    for raw in _WORD.findall(_norm(text).replace("n't", " not")):
+        w = raw.strip("'")
+        if not w or w in _STOP:
+            continue
+        if w in _NEGATIONS:
+            out.add("¬")
+            continue
+        s = _stem(w)
+        if s in _POSITIVE or s.rstrip("s") in _POSITIVE or w in _POSITIVE:
+            out.add("+")
+        elif s in _NEGATIVE or w in _NEGATIVE:
+            out.add("-")
+        else:
+            out.add(w if w in _NUMBERS or any(c.isdigit() for c in w) else s)
+    return frozenset(out)
+
+
+def _covers(big: frozenset[str], small: frozenset[str]) -> bool:
+    """True if `big` already says everything `small` says (and small has enough words to be a real claim)."""
+    if len(small) < 2 or not small <= big:
+        return False
+    # An entry that adds a negation, a number or an opposite attitude says something different, not more.
+    extra = big - small
+    return not (extra & ({"¬", "+", "-"} | {t for t in extra if t in _NUMBERS or any(c.isdigit() for c in t)}))
+
 # --- the validator --------------------------------------------------------------------------------------------
 
 @dataclass
@@ -96,13 +153,19 @@ class Adjustments:
     tendencies_dropped: int = 0
     duplicates_dropped: int = 0
     sparse_trimmed: int = 0
+    # duplicates_dropped = exact_duplicates + near_duplicates (the first is identical text, the second an entry
+    # whose every point is already made by another entry).
+    exact_duplicates: int = 0
+    near_duplicates: int = 0
     raw_entries: int = 0
     raw_tendencies: int = 0
     sparse: bool = False
-    extra: dict[str, int] = field(default_factory=dict)
+    # What was removed and why, WITH the text, for the operator's evaluation script only. In memory; never logged,
+    # never stored, never part of as_dict().
+    removed: list[dict[str, str]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, int]:
-        return {k: int(v) for k, v in self.__dict__.items() if k != "extra"}
+        return {k: int(v) for k, v in self.__dict__.items() if k != "removed"}
 
 
 def _reject(reason: str) -> AnalysisError:
@@ -124,41 +187,89 @@ def ground(profile: CharacterProfile, description: str, *, require_evidence: boo
 
     # 1. Typical expressions must be exact, contiguous text from the description.
     kept = [q for q in data["typical_expressions"] if is_verbatim(q, description)]
+    adj.removed += [{"field": "typical_expressions", "reason": "not_verbatim", "text": q}
+                    for q in data["typical_expressions"] if not is_verbatim(q, description)]
     adj.expressions_dropped = len(data["typical_expressions"]) - len(kept)
     data["typical_expressions"] = kept
 
     # 2. Every contextual tendency must carry a verbatim quote that supports it.
     if require_evidence:
         ctx = [c for c in data["context_tendencies"] if is_verbatim(c.get("evidence", ""), description)]
+        adj.removed += [{"field": "context_tendencies", "reason": "no_verbatim_evidence",
+                         "text": f'{c["context"]}: {c["tendency"]}'}
+                        for c in data["context_tendencies"] if not is_verbatim(c.get("evidence", ""), description)]
         adj.tendencies_dropped = len(data["context_tendencies"]) - len(ctx)
         if adj.raw_tendencies and adj.tendencies_dropped * 2 > adj.raw_tendencies:
             raise _reject("ungrounded_context")  # most of it cites nothing real: do not save a patched remainder
         data["context_tendencies"] = ctx
 
-    # 3. Exact duplicates (same text in two places) are removed; the first occurrence stays.
+    # 3. Duplicates. (a) Identical text anywhere (traits, guidance, uncertainties, expressions): first one stays.
     seen: set[str] = set()
 
-    def fresh(text: str) -> bool:
+    def fresh(text: str, where: str) -> bool:
         key = _core(text)
         if key in seen:
+            adj.exact_duplicates += 1
+            adj.removed.append({"field": where, "reason": "exact_duplicate", "text": text})
             return False
         seen.add(key)
         return True
 
+    data["typical_expressions"] = [q for q in data["typical_expressions"] if fresh(q, "typical_expressions")]
     for f in ITEM_FIELDS:
-        before = len(data[f])
-        data[f] = [i for i in data[f] if fresh(i["text"])]
-        adj.duplicates_dropped += before - len(data[f])
+        data[f] = [i for i in data[f] if fresh(i["text"], f)]
     for f in ("behavioural_guidance", "uncertainties"):
-        before = len(data[f])
-        data[f] = [s for s in data[f] if fresh(s)]
-        adj.duplicates_dropped += before - len(data[f])
+        data[f] = [s_ for s_ in data[f] if fresh(s_, f)]
+
+    # (b) Same observation worded differently: an entry is removed only if another entry already says all of it
+    #     (see _covers). Items are compared across sections and against the evidence-backed context tendencies, which
+    #     are the home for situational behaviour and are never removed because of an item. Guidance is compared with
+    #     guidance and uncertainties with uncertainties only: they have a different job from a trait.
+    ctx_sets = [_tokens(f'{c["context"]} {c["tendency"]}') for c in data["context_tendencies"]]
+    flat = [(f, n, i["text"]) for f in ITEM_FIELDS for n, i in enumerate(data[f])]
+    sets = [_tokens(t) for _, _, t in flat]
+    drop: dict[tuple[str, int], tuple[str, str]] = {}
+    for a, (f, n, _text) in enumerate(flat):
+        for cs, c in zip(ctx_sets, data["context_tendencies"], strict=True):
+            if _covers(cs, sets[a]):
+                drop[(f, n)] = ("context_tendencies", f'{c["context"]}: {c["tendency"]}')
+                break
+        else:
+            for b, (f2, _n2, text2) in enumerate(flat):
+                if b != a and _covers(sets[b], sets[a]) and (sets[b] != sets[a] or b < a):
+                    drop[(f, n)] = (f2, text2)
+                    break
+    for f in ITEM_FIELDS:
+        kept_items = []
+        for n, i in enumerate(data[f]):
+            if (f, n) in drop:
+                adj.near_duplicates += 1
+                adj.removed.append({"field": f, "reason": "near_duplicate", "text": i["text"],
+                                    "covered_by_field": drop[(f, n)][0], "covered_by": drop[(f, n)][1]})
+            else:
+                kept_items.append(i)
+        data[f] = kept_items
+    for f in ("behavioural_guidance", "uncertainties"):
+        sets_f = [_tokens(t) for t in data[f]]
+        keep: list[str] = []
+        for a, t in enumerate(data[f]):
+            other = next((b for b in range(len(data[f])) if b != a and _covers(sets_f[b], sets_f[a])
+                          and (sets_f[b] != sets_f[a] or b < a)), None)
+            if other is None:
+                keep.append(t)
+            else:
+                adj.near_duplicates += 1
+                adj.removed.append({"field": f, "reason": "near_duplicate", "text": t, "covered_by_field": f,
+                                    "covered_by": data[f][other]})
+        data[f] = keep
+    adj.duplicates_dropped = adj.exact_duplicates + adj.near_duplicates
 
     # 4. Sparse input: bounded size. Extra uncertainties/guidance are removed; anything still over budget means the
     #    model invented facts, which cannot be fixed by removal.
     if adj.sparse:
         for f, cap in (("uncertainties", SPARSE_MAX_UNCERTAINTIES), ("behavioural_guidance", SPARSE_MAX_GUIDANCE)):
             adj.sparse_trimmed += max(0, len(data[f]) - cap)
+            adj.removed += [{"field": f, "reason": "sparse_limit", "text": t} for t in data[f][cap:]]
             data[f] = data[f][:cap]
 
     result = CharacterProfile.model_validate(data)
@@ -169,8 +280,9 @@ def ground(profile: CharacterProfile, description: str, *, require_evidence: boo
     if sensitive_violations(result.model_dump_json(), description):
         raise _reject("unsupported_sensitive")
 
-    log.info("grounded raw_entries=%d kept_entries=%d expr_dropped=%d ctx_dropped=%d dup_dropped=%d trimmed=%d",
+    log.info("grounded raw_entries=%d kept_entries=%d expr_dropped=%d ctx_dropped=%d dup_dropped=%d near=%d "
+             "trimmed=%d",
              adj.raw_entries, entry_count(result), adj.expressions_dropped, adj.tendencies_dropped,
-             adj.duplicates_dropped, adj.sparse_trimmed)
+             adj.duplicates_dropped, adj.near_duplicates, adj.sparse_trimmed)
     return result, adj
 
