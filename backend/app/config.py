@@ -15,8 +15,8 @@ class Settings(BaseSettings):
     supabase_jwt_secret: str = ""
     # Reserved for later stages (workers, deletion). Never used for user-facing reads.
     supabase_service_role_key: str = ""
-    # Which external AI provider character analysis uses: "nvidia", "openai", "mock" (sample output, no network;
-    # refused when APP_ENV=production) or empty (AI off). Explicit on purpose: there is no automatic fallback.
+    # Which AI provider character analysis uses: "nvidia", "ollama" (local), "openai", "mock" (sample output, no
+    # network; refused when APP_ENV=production) or empty (AI off). Explicit on purpose: there is no automatic fallback.
     ai_provider: str = ""
     # NVIDIA NIM hosted API (free development endpoint). Character model has no default in code.
     nvidia_api_key: str = ""
@@ -27,6 +27,18 @@ class Settings(BaseSettings):
     # Output budget for NVIDIA only (the shared ANALYSIS_MAX_OUTPUT_TOKENS still governs OpenAI). Hard-bounded so it
     # cannot be raised enough to hide a runaway-reasoning problem: a full profile needs well under 4096 tokens.
     nvidia_max_output_tokens: int = Field(default=4096, ge=512, le=8192)
+    # Ollama: a model served on this machine through its OpenAI-compatible API. No API key. The endpoint must be a
+    # loopback address unless OLLAMA_ALLOW_REMOTE=true is set deliberately (see app.providers.ollama_endpoint_ok).
+    ollama_base_url: str = "http://localhost:11434/v1"
+    ollama_character_model: str = ""
+    ollama_allow_remote: bool = False
+    # "schema" sends response_format=json_schema; "prompt" relies on the schema in the prompt only.
+    ollama_json_mode: str = "schema"
+    # Sent as reasoning_effort ("none" turns thinking off on models that support it). Empty = do not send.
+    ollama_reasoning_effort: str = "none"
+    ollama_max_output_tokens: int = Field(default=4096, ge=512, le=8192)
+    # Local inference can be slow on CPU, so this is separate from the cloud timeout.
+    ollama_timeout_seconds: float = Field(default=300.0, ge=10.0, le=1800.0)
     openai_api_key: str = ""
     # Model used ONLY for character analysis. No default in code: the operator chooses it explicitly
     # (see .env.example) and nothing here ever switches models on its own.

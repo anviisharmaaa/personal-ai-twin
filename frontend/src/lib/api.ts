@@ -105,10 +105,12 @@ export type CharacterState = {
 };
 
 export type ProviderInfo = {
-  id: "nvidia" | "openai" | "mock" | "none";
+  id: "nvidia" | "ollama" | "openai" | "mock" | "none";
   label: string;
   /** True when the description leaves Madhuora's server for a third party. */
   external: boolean;
+  /** True when the model runs on the same computer as Madhuora's server (Ollama on a loopback address). */
+  local?: boolean;
   development_only: boolean;
   disclosure: string[];
 };

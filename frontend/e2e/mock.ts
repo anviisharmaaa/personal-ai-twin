@@ -37,7 +37,7 @@ export type Backend = {
   character: Character;
   aiConfigured: boolean;
   /** Which provider the mocked server reports. "mock" returns a sample-labelled profile. */
-  provider: "nvidia" | "mock" | "none";
+  provider: "nvidia" | "ollama" | "mock" | "none";
   /** "ok" returns the mock profile; any other value is returned as an error code from the analysis endpoint. */
   analyze: string;
   analyzeDelayMs: number;
@@ -70,6 +70,9 @@ export const PROVIDERS = {
   nvidia: { id: "nvidia", label: "NVIDIA", external: true, development_only: true,
     disclosure: ["The character description you write is sent from Madhuora's server to NVIDIA's hosted API (NVIDIA NIM at build.nvidia.com), which runs outside India.",
       "While this provider is active, please use fictional or non-sensitive descriptions only."] },
+  ollama: { id: "ollama", label: "Ollama (local model)", external: false, local: true, development_only: false,
+    disclosure: ["The character description you write is analysed by an AI model running through Ollama on the computer that runs Madhuora's server. This provider does not send it to a cloud AI service.",
+      "Madhuora itself is not entirely local: sign-in uses Supabase, and your description and the interpretation are saved in your Madhuora database like the rest of your twin."] },
   mock: { id: "mock", label: "Sample (no AI)", external: false, development_only: true,
     disclosure: ["This server is in sample mode. No AI model is used and nothing you write leaves Madhuora."] },
   none: { id: "none", label: "None", external: false, development_only: false,
@@ -82,6 +85,7 @@ const view = (be: Backend) => {
   return { status, description_version: c.version, min_chars: 40, profile: c.profile, profile_version: c.profile ? c.profileVersion : null,
     generated_at: c.profile ? "2026-10-14T09:00:00+00:00" : null,
     generated_by: c.profile ? (be.provider === "mock" ? { provider: "mock", model: "sample-fixture", is_sample: true }
+      : be.provider === "ollama" ? { provider: "ollama", model: "qwen-test:9b", is_sample: false }
       : { provider: "nvidia", model: "nvidia/test-model", is_sample: false }) : null,
     failure: c.failure };
 };
@@ -128,7 +132,7 @@ export async function mockApp(page: Page, be: Backend, opts: { auth?: boolean; t
       if (be.analyzeDelayMs) await new Promise((res) => setTimeout(res, be.analyzeDelayMs));
       if (be.analyze !== "ok") {
         be.character = { ...be.character, failure: be.analyze };
-        return json({ detail: { code: be.analyze, message: be.analyze === "quota_exhausted" ? "The AI service's free allowance is used up for now." : "The AI took too long to respond. Please try again." } }, be.analyze === "quota_exhausted" ? 503 : 504);
+        return json({ detail: { code: be.analyze, message: be.analyze === "quota_exhausted" ? "The AI service's free allowance is used up for now." : be.analyze === "local_unavailable" ? "Ollama isn't running or couldn't be reached." : "The AI took too long to respond. Please try again." } }, be.analyze === "quota_exhausted" || be.analyze.startsWith("local_") ? 503 : 504);
       }
       be.character = { ...be.character, profile: MOCK_PROFILE, profileVersion: (body as { version: number }).version, failure: null };
       return json({ character: view(be), cached: false });

@@ -22,7 +22,7 @@ def split_model(stored: str | None) -> tuple[str, str | None]:
     if not stored:
         return "", None
     head, sep, tail = stored.partition(":")
-    return (head, tail) if sep and head in ("nvidia", "openai", "mock") else ("", stored)
+    return (head, tail) if sep and head in ("nvidia", "ollama", "openai", "mock") else ("", stored)
 
 
 def stored_provider(row: dict[str, Any]) -> str:

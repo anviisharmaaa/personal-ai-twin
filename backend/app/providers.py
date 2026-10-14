@@ -1,17 +1,21 @@
 """Provider selection for character analysis.
 
-AI_PROVIDER is explicit: "nvidia", "openai", "mock", or empty (= AI off). There is NO fallback from one
-provider to another. If the chosen provider fails, the user sees an honest error and the last good
-profile is kept.
+AI_PROVIDER is explicit: "nvidia", "ollama" (a model on this machine), "openai", "mock", or empty (= AI off).
+There is NO fallback from one provider to another. If the chosen provider fails, the user sees an honest error and
+the last good profile is kept.
 """
 
+import ipaddress
+import json
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
 from app.character import (
     OUTPUT_JSON_SCHEMA,
     SYSTEM_PROMPT,
+    AnalysisError,
     AnalysisResult,
     CharacterProfile,
     OpenAIAnalyzer,
@@ -19,7 +23,34 @@ from app.character import (
 from app.config import Settings
 
 CONSENT_BASE = "2026-10-v3"
-PROVIDERS = ("nvidia", "openai", "mock")
+PROVIDERS = ("nvidia", "ollama", "openai", "mock")
+
+
+_LOOPBACK_NAMES = frozenset(("localhost", "127.0.0.1", "::1"))
+
+
+def ollama_is_local(base_url: str) -> bool:
+    """True only for an http(s) URL with no credentials whose host is this machine (localhost or a loopback IP)."""
+    try:
+        parts = urlsplit(base_url.strip())
+        host = (parts.hostname or "").lower()
+        if parts.scheme not in ("http", "https") or parts.username or parts.password or not host:
+            return False
+        if host in _LOOPBACK_NAMES:
+            return True
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def ollama_endpoint_ok(s: Settings) -> bool:
+    """Ollama may only be used at a loopback address unless the operator deliberately sets OLLAMA_ALLOW_REMOTE."""
+    url = s.ollama_base_url.strip()
+    if ollama_is_local(url):
+        return True
+    parts = urlsplit(url)
+    return bool(s.ollama_allow_remote and parts.scheme in ("http", "https") and parts.hostname
+                and not parts.username and not parts.password)
 
 
 def active_provider(s: Settings) -> str:
@@ -32,7 +63,10 @@ def active_provider(s: Settings) -> str:
 
 def consent_version(s: Settings) -> str:
     """Consent is tied to the provider: changing provider changes the version, so users must re-consent."""
-    return f"{CONSENT_BASE}-{active_provider(s) or 'none'}"
+    p = active_provider(s) or "none"
+    if p == "ollama" and not ollama_is_local(s.ollama_base_url):
+        p = "ollama-remote"  # different disclosure (the text leaves this machine), so a different agreement
+    return f"{CONSENT_BASE}-{p}"
 
 
 def provider_info(s: Settings) -> dict[str, Any]:
@@ -40,7 +74,7 @@ def provider_info(s: Settings) -> dict[str, Any]:
     p = active_provider(s)
     if p == "nvidia":
         return {
-            "id": "nvidia", "label": "NVIDIA", "external": True, "development_only": True,
+            "id": "nvidia", "label": "NVIDIA", "external": True, "local": False, "development_only": True,
             "disclosure": [
                 "The character description you write is sent from Madhuora's server to NVIDIA's hosted API "
                 "(NVIDIA NIM at build.nvidia.com), which runs outside India.",
@@ -50,9 +84,29 @@ def provider_info(s: Settings) -> dict[str, Any]:
                 "While this provider is active, please use fictional or non-sensitive descriptions only.",
             ],
         }
+    if p == "ollama":
+        local = ollama_is_local(s.ollama_base_url)
+        if local:
+            lines = [
+                "The character description you write is analysed by an AI model running through Ollama on the "
+                "computer that runs Madhuora's server. This provider does not send it to a cloud AI service.",
+                "Madhuora itself is not entirely local: sign-in uses Supabase, and your description and the "
+                "interpretation are saved in your Madhuora database like the rest of your twin.",
+                "Local models can misread a description. The interpretation is checked against your words before it "
+                "is saved, but please read it.",
+            ]
+        else:
+            lines = [
+                "This server is set to use an Ollama server that is NOT on the same computer. The character "
+                "description you write is sent to that Ollama server.",
+                "Madhuora also stores your description and the interpretation in your Madhuora database, and uses "
+                "Supabase for sign-in.",
+            ]
+        return {"id": "ollama", "label": "Ollama (local model)" if local else "Ollama (remote server)",
+                "external": not local, "local": local, "development_only": False, "disclosure": lines}
     if p == "openai":
         return {
-            "id": "openai", "label": "OpenAI", "external": True, "development_only": False,
+            "id": "openai", "label": "OpenAI", "external": True, "local": False, "development_only": False,
             "disclosure": [
                 "The character description you write is sent from Madhuora's server to OpenAI's API, "
                 "which processes data outside India.",
@@ -60,14 +114,14 @@ def provider_info(s: Settings) -> dict[str, Any]:
         }
     if p == "mock":
         return {
-            "id": "mock", "label": "Sample (no AI)", "external": False, "development_only": True,
+            "id": "mock", "label": "Sample (no AI)", "external": False, "local": False, "development_only": True,
             "disclosure": [
                 "This server is in sample mode. No AI model is used and nothing you write leaves Madhuora. "
                 "Interpretations shown are fixed samples, not a reading of your description.",
             ],
         }
     return {
-        "id": "none", "label": "None", "external": False, "development_only": False,
+        "id": "none", "label": "None", "external": False, "local": False, "development_only": False,
         "disclosure": ["No AI provider is configured on this server, so no AI analysis can run."],
     }
 
@@ -131,6 +185,83 @@ class NvidiaAnalyzer(OpenAIAnalyzer):
         return payload
 
 
+class OllamaAnalyzer(OpenAIAnalyzer):
+    """A model served by Ollama through its OpenAI-compatible API (default http://localhost:11434/v1).
+
+    No API key is used or sent. The endpoint is checked by `ollama_endpoint_ok`: by default only a loopback address is
+    accepted, so a mistyped or hostile OLLAMA_BASE_URL cannot send descriptions to a remote host. Everything after the
+    HTTP call (parsing, grounding, de-duplication, sparse rules, sensitive checks) is the shared pipeline.
+
+    Local specifics: no retry (a second attempt after a long timeout only doubles the wait), Ollama-specific error
+    codes for "not running" and "model not installed", and a check that the prompt was not silently cut short by a small
+    context window (Ollama truncates an over-long prompt rather than failing).
+    """
+
+    PROVIDER = "ollama"
+    ATTEMPTS = 1
+
+    def __init__(self, base_url: str, model: str, timeout_s: float, max_output_tokens: int, *, allowed: bool = True,
+                 json_mode: str = "schema", reasoning_effort: str = "none",
+                 transport: httpx.AsyncBaseTransport | None = None) -> None:
+        super().__init__("", model, timeout_s, max_output_tokens, transport)
+        self.URL = base_url.strip().rstrip("/") + "/chat/completions"
+        self._allowed = allowed
+        self._mode = json_mode
+        self._effort = reasoning_effort.strip()
+
+    @property
+    def configured(self) -> bool:
+        return bool(self._model and self._allowed)
+
+    def _headers(self) -> dict[str, str]:
+        return {}
+
+    def _system(self) -> str:
+        return SYSTEM_PROMPT + "\n\nThe JSON must match this JSON Schema exactly:\n" + json.dumps(OUTPUT_JSON_SCHEMA)
+
+    def _payload(self, description: str) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": self._system()},
+                {"role": "user", "content": f"<description>\n{description}\n</description>"},
+            ],
+            "temperature": 0.2,
+            "stream": False,
+            "max_tokens": self._max_out,
+        }
+        if self._mode == "schema":
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "character_profile", "strict": True, "schema": OUTPUT_JSON_SCHEMA},
+            }
+        if self._effort:
+            payload["reasoning_effort"] = self._effort
+        return payload
+
+    def _check_usage(self, data: dict[str, Any], payload: dict[str, Any]) -> None:
+        used = (data.get("usage") or {}).get("prompt_tokens")
+        sent = sum(len(m["content"]) for m in payload["messages"])
+        # Real text is never fewer than ~1 token per 6 characters; a lower count means the server dropped part of it.
+        if isinstance(used, int) and used < sent / 6:
+            raise AnalysisError(
+                "context_too_small",
+                "The local model's context window is too small for this request, so part of it was dropped. "
+                "Nothing was saved.", 502, f"prompt_tokens={used} chars={sent}")
+
+    async def analyze(self, description: str) -> AnalysisResult:
+        try:
+            return await super().analyze(description)
+        except AnalysisError as e:
+            if e.code == "provider_unreachable":
+                raise AnalysisError("local_unavailable", "Ollama isn't running or couldn't be reached.", 503) from e
+            if e.code == "provider_rejected" and "not found" in (e.detail or "").lower():
+                raise AnalysisError("local_model_missing",
+                                    "The configured Ollama model isn't installed on this computer.", 503,
+                                    e.detail) from e
+            raise
+
+
 # Fixed, obviously-generic sample. It never reads or repeats the user's description.
 _MOCK = {
     "summary": "SAMPLE ONLY: no AI model read your description. This fixed example shows how an interpretation "
@@ -163,6 +294,10 @@ def build_analyzer(s: Settings) -> Any:
     if p == "nvidia":
         return NvidiaAnalyzer(s.nvidia_api_key, s.nvidia_character_model, s.analysis_timeout_seconds,
                               s.nvidia_max_output_tokens, s.nvidia_base_url, s.nvidia_json_mode)
+    if p == "ollama":
+        return OllamaAnalyzer(s.ollama_base_url, s.ollama_character_model, s.ollama_timeout_seconds,
+                              s.ollama_max_output_tokens, allowed=ollama_endpoint_ok(s),
+                              json_mode=s.ollama_json_mode, reasoning_effort=s.ollama_reasoning_effort)
     if p == "openai":
         return OpenAIAnalyzer(s.openai_api_key, s.openai_character_model, s.analysis_timeout_seconds,
                               s.analysis_max_output_tokens)
@@ -172,7 +307,7 @@ def build_analyzer(s: Settings) -> Any:
 
 
 def provider_model(s: Settings) -> str | None:
-    return {"nvidia": s.nvidia_character_model, "openai": s.openai_character_model,
+    return {"nvidia": s.nvidia_character_model, "ollama": s.ollama_character_model, "openai": s.openai_character_model,
             "mock": "sample-fixture"}.get(active_provider(s)) or None
 
 

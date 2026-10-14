@@ -416,6 +416,25 @@ test.describe("Character workspace (mocked backend and mocked analysis)", () => 
     await expect(page.getByText(/fictional or non-sensitive text only/)).toBeVisible();
   });
 
+  test("a local Ollama provider shows the local notice, not the fictional-only warning, and says what is not local", async ({ page }) => {
+    await open(page, withCharacter(false, { provider: "ollama", analyzeDelayMs: 300 }));
+    await expect(page.getByText(/Analysed by a model running on this computer \(Ollama\)/)).toBeVisible();
+    await expect(page.getByText(/Development AI provider/)).toHaveCount(0);
+    await page.getByRole("button", { name: "Understand this character" }).click();
+    await expect(page.getByText(/with the local model… this can take a minute or two/)).toBeVisible();
+    await expect(page.getByText(/made by Ollama \(local model\)/)).toBeVisible();
+  });
+
+  test("Ollama not running is explained plainly and the previous interpretation stays", async ({ page }) => {
+    const be = withCharacter(true, { provider: "ollama", analyze: "local_unavailable" });
+    await open(page, be);
+    await page.getByLabel("Describe the person").fill(DESCRIPTION + " Extra detail.");
+    await page.getByRole("button", { name: "Update the interpretation" }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "Ollama isn't running" })).toBeVisible();
+    await expect(page.getByText("Warm and teasing with close friends")).toBeVisible();
+    await expect(page.getByLabel("Describe the person")).toHaveValue(DESCRIPTION + " Extra detail.");
+  });
+
   test("sample mode is labelled as a sample and never described as AI-generated", async ({ page }) => {
     const be = withCharacter(false, { provider: "mock" });
     await open(page, be);

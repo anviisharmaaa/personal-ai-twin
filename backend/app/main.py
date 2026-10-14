@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 
 from app.character_routes import router as character_router
 from app.config import get_settings
-from app.providers import active_provider, provider_ready
+from app.providers import active_provider, ollama_endpoint_ok, provider_ready
 from app.routes import router
 from app.supabase_rest import SupabaseError
 
@@ -42,7 +42,11 @@ def create_app() -> FastAPI:
             warnings.append("OPENAI_CHAT_MODEL is not used for character analysis. Set OPENAI_CHARACTER_MODEL.")
         chosen = settings.ai_provider.strip().lower()
         if chosen and not active_provider(settings):
-            warnings.append("AI_PROVIDER is not valid (use nvidia, openai or mock; mock is refused in production).")
+            warnings.append("AI_PROVIDER is not valid (use nvidia, ollama, openai or mock; "
+                            "mock is refused in production).")
+        if chosen == "ollama" and not ollama_endpoint_ok(settings):
+            warnings.append("OLLAMA_BASE_URL is not a local address, so Ollama is disabled. Use "
+                            "http://localhost:11434/v1 (a remote Ollama needs OLLAMA_ALLOW_REMOTE=true).")
         if not chosen and (settings.openai_api_key or settings.nvidia_api_key):
             warnings.append("An AI key is set but AI_PROVIDER is empty, so AI analysis is off. Set AI_PROVIDER.")
         return {

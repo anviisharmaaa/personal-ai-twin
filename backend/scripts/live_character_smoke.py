@@ -1,6 +1,6 @@
 """LIVE check of character analysis against a real provider. NOT part of the mocked test suite.
 
-The provider is the one you explicitly configured in backend/.env (AI_PROVIDER=nvidia or openai). Nothing is
+The provider is the one you explicitly configured in backend/.env (AI_PROVIDER=nvidia, ollama or openai). Nothing is
 chosen for you and nothing falls back. For NVIDIA (free development endpoint) you need:
 
     AI_PROVIDER=nvidia
@@ -41,7 +41,7 @@ from app.grounding import (
     is_verbatim,
     sensitive_violations,
 )
-from app.providers import NvidiaAnalyzer, build_analyzer
+from app.providers import NvidiaAnalyzer, OllamaAnalyzer, build_analyzer, ollama_endpoint_ok
 
 # Pricing as listed on OpenAI's official model catalogue on 2026-10-14. Re-check before relying on it.
 PRICE_IN_PER_MTOK = 0.10
@@ -246,11 +246,28 @@ def fmt_usage(r: AnalysisResult) -> str:
     note = ""
     if PROVIDER == "nvidia" and r.reasoning_tokens:
         note = f"  WARNING: reasoning_tokens={r.reasoning_tokens} although reasoning was disabled in the request"
+    if PROVIDER == "ollama":
+        return base + " cost=none (local inference)" + note
     return base + (f" est_cost=${c:.5f}" if c is not None else " cost=free-tier (no per-token price)") + note
 
 
 async def access_check(s: Settings) -> tuple[int, str]:
     """Free check that this key can see this model. Returns (http status, note). Uses no generation tokens."""
+    if PROVIDER == "ollama":
+        # Native listing; no key, no generation. /v1 is stripped because /api/tags lives beside it.
+        root = s.ollama_base_url.rstrip("/").removesuffix("/v1")
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(root + "/api/tags")
+        if r.status_code != 200:
+            return r.status_code, ""
+        try:
+            names = {m.get("name") for m in r.json().get("models", [])}
+        except ValueError:
+            return 200, "model list not readable; relying on the smoke call below"
+        want = s.ollama_character_model
+        if want in names or f"{want}:latest" in names:
+            return 200, "model is installed locally"
+        return 404, f"model not installed; installed: {sorted(n for n in names if n)}. Nothing is downloaded automatically."
     if PROVIDER == "openai":
         async with httpx.AsyncClient(timeout=30) as c:
             r = await c.get(f"https://api.openai.com/v1/models/{s.openai_character_model}",
@@ -302,6 +319,8 @@ def rescore(path: str) -> int:
 async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--eval", action="store_true", help="also run the 8-description evaluation set")
+    ap.add_argument("--text-file", metavar="FILE",
+                    help="OLLAMA ONLY: analyse your own description from FILE locally (never sent to NVIDIA/OpenAI)")
     ap.add_argument("--rescore", metavar="FILE", help="OFFLINE: re-check a saved results file; makes no API requests")
     args = ap.parse_args()
     if args.rescore:
@@ -309,15 +328,33 @@ async def main() -> int:
     global PROVIDER
     s = get_settings()
     PROVIDER = s.ai_provider.strip().lower()
-    if PROVIDER not in ("nvidia", "openai"):
+    if PROVIDER not in ("nvidia", "ollama", "openai"):
         print("Set AI_PROVIDER=nvidia (or openai) in backend/.env. This live test never guesses the provider, and "
               "'mock' is not a live provider.")
         return 2
-    key = s.nvidia_api_key if PROVIDER == "nvidia" else s.openai_api_key
-    model = s.nvidia_character_model if PROVIDER == "nvidia" else s.openai_character_model
-    print(f"LIVE TEST (real {PROVIDER.upper()} calls with fictional text). Not the mocked test suite.")
-    print(f"  AI_PROVIDER={PROVIDER}   key set: {bool(key)}   model: {model or '(not set)'}")
+    if args.text_file and not (PROVIDER == "ollama" and ollama_endpoint_ok(s)):
+        print("--text-file is allowed only with AI_PROVIDER=ollama and a local endpoint, so your own text never "
+              "leaves this computer for a cloud provider.")
+        return 2
+    if PROVIDER == "ollama":
+        key = "not-needed"
+        model = s.ollama_character_model
+        if not ollama_endpoint_ok(s):
+            print("OLLAMA_BASE_URL is not a local address and OLLAMA_ALLOW_REMOTE is not enabled. Stopping.")
+            return 2
+    else:
+        key = s.nvidia_api_key if PROVIDER == "nvidia" else s.openai_api_key
+        model = s.nvidia_character_model if PROVIDER == "nvidia" else s.openai_character_model
+    what = "your own text, locally" if args.text_file else "fictional text"
+    print(f"LIVE TEST (real {PROVIDER.upper()} calls with {what}). Not the mocked test suite.")
+    print(f"  AI_PROVIDER={PROVIDER}   key set: {bool(key) if PROVIDER != 'ollama' else 'n/a (local)'}   "
+          f"model: {model or '(not set)'}")
+    if PROVIDER == "ollama":
+        print("  Tip: start the server with OLLAMA_CONTEXT_LENGTH=16384 so long descriptions are not truncated.")
     if not (key and model):
+        if PROVIDER == "ollama":
+            print("Set OLLAMA_CHARACTER_MODEL in backend/.env to a model you have installed (ollama list).")
+            return 2
         print(f"Set the {PROVIDER.upper()}_API_KEY and {PROVIDER.upper()}_CHARACTER_MODEL lines in backend/.env first.")
         return 2
     report: dict = {"started": datetime.now(timezone.utc).isoformat(), "provider": PROVIDER, "model": model, "steps": {}}  # type: ignore[type-arg]
@@ -338,6 +375,25 @@ async def main() -> int:
         return 1
 
     analyzer = build_analyzer(s)
+    if args.text_file:
+        text = Path(args.text_file).read_text(encoding="utf-8")
+        print(f"\n[1] Local analysis of {args.text_file} ({len(text.split())} words). PRIVACY: the result file below "
+              "contains your description; it is git-ignored but do not share it.")
+        res, err, _ = await run_one(analyzer, text)
+        if err or not res:
+            assert err
+            print(f"    FAILED: code={err.code}  detail: {err.detail}")
+            return 1
+        print("    " + fmt_usage(res))
+        cks = checks("own", text, res.profile.model_dump(), res.adjustments)
+        failures += print_checks(cks)
+        for r in res.removed:
+            print(f"      removed [{r['reason']}] {r['field']}: {r['text'][:90]!r}")
+        report["steps"]["own"] = save_case(text, res, cks)
+        path = outdir / f"local_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"\nSaved (contains your text): {path}")
+        return 1 if failures else 0
 
     # 1. Smoke test: one real structured analysis.
     print(f"\n[1] Smoke test: one real {PROVIDER} analysis of a fictional description")
@@ -362,14 +418,20 @@ async def main() -> int:
     print("\n[2] Error handling with deliberately wrong credentials/model (LIVE)")
 
     def variant(k: str, m: str) -> OpenAIAnalyzer:
+        if PROVIDER == "ollama":
+            return OllamaAnalyzer(s.ollama_base_url, m, 60, 200, allowed=True, json_mode=s.ollama_json_mode,
+                                  reasoning_effort=s.ollama_reasoning_effort)
         if PROVIDER == "nvidia":
             return NvidiaAnalyzer(k, m, 30, 200, s.nvidia_base_url, s.nvidia_json_mode)
         return OpenAIAnalyzer(k, m, 30, 200)
 
-    for label, a, expect in [
+    tests = [
         ("invalid key", variant("invalid-test-key", model), "provider_auth"),
         ("unknown model", variant(key, "model-that-does-not-exist-xyz"), "provider_rejected"),
-    ]:
+    ]
+    if PROVIDER == "ollama":  # no key exists locally; a missing model must give the specific local error
+        tests = [("unknown model", variant(key, "model-that-does-not-exist-xyz"), "local_model_missing")]
+    for label, a, expect in tests:
         _, e, _ = await run_one(a, SMOKE)
         got = e.code if e else "no error"
         ok = got == expect

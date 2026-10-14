@@ -98,3 +98,17 @@ Create two separate dev accounts (A and B). Complete onboarding as A. Then:
 python -m scripts.rls_two_user_check
 ```
 Passwords are typed at a hidden prompt. The script never deletes A's data. Send me the PASS/FAIL lines.
+
+## 5. Local provider (Ollama) — real local inference
+
+Nothing here has been run by Claude: the cloud workspace cannot reach your Ollama. Mocked tests only prove the adapter logic.
+
+1. Install Ollama for Windows from ollama.com, then check hardware (safe, read-only), in PowerShell:
+   `Get-CimInstance Win32_ComputerSystem | Select TotalPhysicalMemory; Get-CimInstance Win32_VideoController | Select Name,AdapterRAM; Get-PSDrive C | Select Free`
+2. Choose a model by RAM/VRAM and verify its name at ollama.com/library. Approximate download sizes: `qwen3.5:4b` 3.3 GB, `qwen3.5:9b` 6.6 GB. Pull only after you approve the size: `ollama pull <model>`; confirm with `ollama list`.
+3. Run the server with a larger context: `$env:OLLAMA_CONTEXT_LENGTH=16384; ollama serve`.
+4. In `backend/.env`: `AI_PROVIDER=ollama`, `OLLAMA_CHARACTER_MODEL=<installed name>` (no key needed).
+5. Smoke test: `python scripts/live_character_smoke.py` (fictional sample, error test, then optionally `--eval`).
+   Your own text, locally only: `python scripts/live_character_smoke.py --text-file mine.txt` (output in git-ignored `scripts/out/`).
+6. Browser checklist = section 2, but with the Ollama notice (local processing, Supabase still stores data) and these descriptions: one short, one detailed, one with contrasting behaviours. Also stop Ollama and confirm the "local model unavailable" error keeps the previous profile, and switch provider to confirm consent re-review.
+7. Unverified until you run it: `/v1` acceptance of `response_format` json_schema and `reasoning_effort` for your model (if rejected, set `OLLAMA_JSON_MODE=prompt`), speed, and profile quality.

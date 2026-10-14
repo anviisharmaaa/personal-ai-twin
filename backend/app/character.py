@@ -254,6 +254,7 @@ class OpenAIAnalyzer:
 
     PROVIDER = "openai"
     URL = "https://api.openai.com/v1/chat/completions"
+    ATTEMPTS = 2  # one retry, only for timeouts / connection errors / 5xx
 
     def __init__(self, api_key: str, model: str, timeout_s: float, max_output_tokens: int,
                  transport: httpx.AsyncBaseTransport | None = None) -> None:
@@ -270,6 +271,12 @@ class OpenAIAnalyzer:
     @property
     def configured(self) -> bool:
         return bool(self._key and self._model)
+
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self._key}"}
+
+    def _check_usage(self, data: dict[str, Any], payload: dict[str, Any]) -> None:
+        """Hook for providers that can silently lose part of the prompt. Default: nothing to check."""
 
     def _payload(self, description: str) -> dict[str, Any]:
         return {
@@ -293,16 +300,16 @@ class OpenAIAnalyzer:
         data: dict[str, Any] | None = None
         # One retry, only for transient failures. Never for malformed output (it would just cost again),
         # and never after a rate-limit or quota response.
-        for attempt in (1, 2):
+        for attempt in range(1, self.ATTEMPTS + 1):
             try:
                 async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client:
-                    res = await client.post(self.URL, json=payload, headers={"Authorization": f"Bearer {self._key}"})
+                    res = await client.post(self.URL, json=payload, headers=self._headers())
             except httpx.TimeoutException as exc:
-                if attempt == 2:
+                if attempt == self.ATTEMPTS:
                     raise AnalysisError("timeout", "The AI took too long to respond. Please try again.", 504) from exc
                 continue
             except httpx.HTTPError as exc:
-                if attempt == 2:
+                if attempt == self.ATTEMPTS:
                     raise AnalysisError("provider_unreachable", "We couldn't reach the AI service.", 502) from exc
                 continue
             if res.status_code == 429:
@@ -319,7 +326,7 @@ class OpenAIAnalyzer:
                 raise AnalysisError("provider_rejected", "The configured AI model rejected the request.", 502,
                                     _provider_detail(res))
             if res.status_code >= 500:
-                if attempt == 2:
+                if attempt == self.ATTEMPTS:
                     raise AnalysisError("provider_error", "The AI service had a problem. Please try again.", 502,
                                         f"http={res.status_code}")
                 continue
@@ -334,6 +341,7 @@ class OpenAIAnalyzer:
         assert data is not None
         try:
             choice = data["choices"][0]
+            self._check_usage(data, payload)
             if choice.get("finish_reason") == "length":
                 raise AnalysisError("truncated", "The AI's answer was cut off. Please try again.", 502,
                                     f"usage={data.get('usage')}")

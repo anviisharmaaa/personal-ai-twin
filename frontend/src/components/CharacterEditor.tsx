@@ -127,7 +127,7 @@ export function CharacterEditor({ twin, character, consentGranted, provider, mod
 
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
         <p role="status" aria-live="polite" className="text-sm text-muted">
-          {analyze.isPending ? "Reading your description…" : save.isPending ? "Saving…" : note ?? status}
+          {analyze.isPending ? (provider.id === "ollama" ? "Reading your description with the local model… this can take a minute or two." : "Reading your description…") : save.isPending ? "Saving…" : note ?? status}
         </p>
         <div className="flex flex-wrap gap-2">
           {mode === "studio" && (
@@ -146,6 +146,12 @@ export function CharacterEditor({ twin, character, consentGranted, provider, mod
           <strong>Development AI provider ({provider.label}).</strong> Understanding a character sends your description
           to a free test service. Use fictional or non-sensitive text only while this is active.
         </Notice></div>
+      )}
+      {provider.id === "ollama" && provider.local && (
+        <p className="mt-4 text-sm text-muted">
+          Analysed by a model running on this computer (Ollama). Your account and saved text still use Madhuora’s online
+          services; <Link className="underline" to="/app/settings">Settings</Link> explains what stays local.
+        </p>
       )}
       {why && <p className="mt-3 text-sm text-muted">{why}{!consentGranted && <> <Link className="underline" to="/app/settings">Open Settings</Link>.</>}</p>}
       {err && <div className="mt-4"><Notice tone="error">{err.message}{" "}
@@ -194,7 +200,7 @@ export function CharacterEditor({ twin, character, consentGranted, provider, mod
   );
 }
 
-const providerName = (p: string) => ({ nvidia: "NVIDIA", openai: "OpenAI", mock: "the sample generator" } as Record<string, string>)[p] ?? p;
+const providerName = (p: string) => ({ nvidia: "NVIDIA", ollama: "Ollama (local model)", openai: "OpenAI", mock: "the sample generator" } as Record<string, string>)[p] ?? p;
 
 function failureText(code: string): string {
   const base = "The last attempt to analyse this didn’t work";
@@ -209,6 +215,9 @@ function failureText(code: string): string {
     provider_auth: `${base}: the AI service rejected the server’s credentials. This needs fixing by whoever runs the server.`,
     provider_unreachable: `${base}: the AI service couldn’t be reached. Your previous interpretation is unchanged.`,
     provider_rejected: `${base}: the AI service rejected the request. This needs fixing by whoever runs the server.`,
+    local_unavailable: `${base}: Ollama isn’t running on this computer, or couldn’t be reached. Start it and try again. Your previous interpretation is unchanged.`,
+    local_model_missing: `${base}: the configured Ollama model isn’t installed on this computer. This needs fixing by whoever runs the server. Your previous interpretation is unchanged.`,
+    context_too_small: `${base}: the local model’s context window is too small for this description, so nothing was saved. Your previous interpretation is unchanged.`,
   };
   return m[code] ?? `${base}. Your previous interpretation is unchanged. You can retry.`;
 }
