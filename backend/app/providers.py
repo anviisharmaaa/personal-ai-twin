@@ -139,7 +139,8 @@ _MOCK = {
     "speaking_style": [{"text": "Example: short, plain sentences", "basis": "inferred"}],
     "typical_expressions": [],
     "context_tendencies": [{"context": "Example situation: meeting someone new",
-                            "tendency": "Example tendency: quieter and more careful", "basis": "context_dependent"}],
+                            "tendency": "Example tendency: quieter and more careful", "basis": "inferred",
+                            "evidence": "(sample)"}],
     "uncertainties": ["Everything on this page is a fixed sample, not an interpretation of your text."],
 }
 

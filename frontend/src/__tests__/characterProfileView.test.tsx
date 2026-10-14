@@ -25,13 +25,14 @@ describe("CharacterProfileView", () => {
         profile={{
           ...empty,
           core_traits: [{ text: "Loyal", basis: "stated" }],
-          context_tendencies: [{ context: "With strangers", tendency: "Reserved", basis: "context_dependent" }],
+          context_tendencies: [{ context: "With strangers", tendency: "Reserved", basis: "context_dependent", evidence: "goes quiet around people she has just met" }],
         }}
       />,
     );
     expect(screen.getByText(/You said this/)).toBeTruthy();
     expect(screen.getByText("With strangers")).toBeTruthy();
     expect(screen.getByText(/Depends on the situation/)).toBeTruthy();
+    expect(screen.getByText(/From your description: “goes quiet around people she has just met”/)).toBeTruthy();
     expect(screen.getByRole("heading", { name: "How they respond in different situations" })).toBeTruthy();
   });
 

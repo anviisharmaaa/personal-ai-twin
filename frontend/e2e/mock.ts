@@ -24,7 +24,7 @@ export const MOCK_PROFILE = {
   warmth_and_expressiveness: [], humour_and_playfulness: [{ text: "Teases her closest friends", basis: "stated" }],
   empathy_and_support: [], directness_and_disagreement: [], values_and_motivations: [], relationships_and_social: [],
   interests_and_habits: [], communication_preferences: [], boundaries_and_careful_topics: [],
-  context_tendencies: [{ context: "Around strangers", tendency: "Quiet and observant", basis: "context_dependent" }],
+  context_tendencies: [{ context: "Around strangers", tendency: "Quiet and observant", basis: "stated", evidence: "goes quiet around people she has just met" }],
   response_patterns: [], behavioural_guidance: ["Listen first, then give an honest view."],
   uncertainties: ["How she behaves at work is not described."],
 };

@@ -29,7 +29,8 @@ CONSENT = "2026-10-v3-none"  # tests run with AI_PROVIDER unset; the version is 
 TEXT = "She is warm and teasing with close friends, but quiet and careful around people she has just met."
 GOOD = {"summary": "Warm with friends, reserved with strangers.",
         "core_traits": [{"text": "Warm with close friends", "basis": "stated"}],
-        "context_tendencies": [{"context": "With strangers", "tendency": "Reserved", "basis": "stated"}]}
+        "context_tendencies": [{"context": "With strangers", "tendency": "Reserved", "basis": "stated",
+                                "evidence": "quiet and careful around people she has just met"}]}
 
 
 class FakeAnalyzer:
@@ -250,11 +251,11 @@ async def test_adapter_request_shape_and_parse() -> None:
         seen["body"] = json.loads(req.content)
         return ok_response(json.dumps(GOOD | {k: [] for k in OUTPUT_JSON_SCHEMA["required"] if k not in GOOD}))
 
-    res = await provider(handler).analyze("hello there")
+    res = await provider(handler).analyze(TEXT)
     body = seen["body"]
     assert seen["auth"] == "Bearer sk-test" and body["model"] == "test-model"  # type: ignore[index]
     assert body["response_format"]["json_schema"]["strict"] is True  # type: ignore[index]
-    assert "hello there" in body["messages"][1]["content"]  # type: ignore[index]
+    assert TEXT in body["messages"][1]["content"]  # type: ignore[index]
     assert res.profile.summary and res.input_tokens == 10 and res.model == "test-model-2026"
 
 

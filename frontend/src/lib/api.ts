@@ -84,7 +84,8 @@ export type CharacterProfile = {
   interests_and_habits: Item[];
   communication_preferences: Item[];
   boundaries_and_careful_topics: Item[];
-  context_tendencies: { context: string; tendency: string; basis: Basis }[];
+  /** `evidence` is an exact quote from the description (absent on interpretations made before it existed). */
+  context_tendencies: { context: string; tendency: string; basis: Basis; evidence?: string }[];
   response_patterns: Item[];
   behavioural_guidance: string[];
   uncertainties: string[];

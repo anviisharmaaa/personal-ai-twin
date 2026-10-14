@@ -204,6 +204,7 @@ function failureText(code: string): string {
     malformed_response: `${base}: the AI returned something unusable. Try again.`,
     truncated: `${base}: the answer was cut off. Try again.`,
     refused: `${base}: the AI declined this description.`,
+    quality_failed: `${base}: the interpretation didn’t match your description closely enough to be saved. Your previous interpretation is unchanged. You can try again.`,
     quota_exhausted: `${base}: the free AI allowance is used up for now. Your description and previous interpretation are unchanged.`,
     provider_auth: `${base}: the AI service rejected the server’s credentials. This needs fixing by whoever runs the server.`,
     provider_unreachable: `${base}: the AI service couldn’t be reached. Your previous interpretation is unchanged.`,

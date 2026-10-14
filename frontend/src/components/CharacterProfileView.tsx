@@ -90,6 +90,7 @@ export function CharacterProfileView({ profile }: { profile: CharacterProfile })
                       <div key={i} className="max-w-[62ch]">
                         <dt className="font-medium">{c.context}</dt>
                         <dd>{c.tendency} <span className="whitespace-nowrap text-xs text-muted">· {BASIS[c.basis]}</span></dd>
+                        {c.evidence && <dd className="mt-0.5 text-sm text-muted">From your description: “{c.evidence}”</dd>}
                       </div>
                     ))}
                   </dl>

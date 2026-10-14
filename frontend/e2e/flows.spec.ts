@@ -311,7 +311,8 @@ test.describe("Character workspace (mocked backend and mocked analysis)", () => 
     await expect(page.getByRole("heading", { name: "What Madhuora understood" })).toBeVisible();
     await expect(page.getByText("Warm and teasing with close friends")).toBeVisible();
     await expect(page.getByText("Around strangers")).toBeVisible();
-    await expect(page.getByText("Depends on the situation")).toBeVisible();
+    await expect(page.getByText(/From your description: “goes quiet around people she has just met”/)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Depending on the situation" })).toBeVisible();
     // Empty areas are not rendered, rather than shown as invented or blank content.
     await expect(page.getByRole("heading", { name: "What matters to them" })).toHaveCount(0);
     await expect(page.getByRole("status").filter({ hasText: "Interpretation updated." })).toBeVisible();

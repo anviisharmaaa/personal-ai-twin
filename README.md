@@ -53,6 +53,9 @@ failed analysis never overwrites the last good profile.
   **per server process** (use a database lock if you ever run several workers). `ANALYSIS_DAILY_LIMIT` and `AI_ENABLED` bound spend,
   but provider-side billing limits are still the real budget guard.
 - `ai_usage` stores counts and token numbers only, never content.
+- Model output is **grounded before saving** (`app/grounding.py`): typical expressions must be exact text from the description,
+  context tendencies need a verbatim evidence quote, short descriptions get a bounded profile, and unsupported sensitive
+  attributes are rejected. Failures (`quality_failed`) keep the last good profile. See `docs/EVALUATION.md`.
 
 ### Verification status
 - Mocked: backend pytest (FakeSupabase + FakeAnalyzer + mocked HTTP for the OpenAI and NVIDIA adapters), Playwright with a mocked API.
