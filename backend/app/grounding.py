@@ -102,6 +102,7 @@ _STOP = frozenset((
 _NEGATIONS = frozenset(("not", "no", "never", "without", "cannot", "nor", "n't", "neither", "hardly", "rarely"))
 _POSITIVE = frozenset(("love", "like", "enjoy", "adore", "relish"))
 _NEGATIVE = frozenset(("hate", "dislike", "detest", "resent", "loathe"))
+_CONTRAST = frozenset(("instead", "rather"))   # "instead of" / "rather than" are the same contrast
 _NUMBERS = frozenset(("one two three four five six seven eight nine ten once twice thrice half double "
                       "first second third").split())
 _WORD = re.compile(r"[\w']+", re.UNICODE)
@@ -115,6 +116,10 @@ def _stem(w: str) -> str:
     return w[:-1] if len(w) > 3 and w.endswith("e") else w
 
 
+_POS_STEMS = frozenset(_stem(w) for w in _POSITIVE)   # loves/loved/loving/love -> the same stem
+_NEG_STEMS = frozenset(_stem(w) for w in _NEGATIVE)
+
+
 def _tokens(text: str) -> frozenset[str]:
     """Content words of an entry; the polarity of love/hate-type verbs and negations are kept as markers."""
     out: set[str] = set()
@@ -125,10 +130,13 @@ def _tokens(text: str) -> frozenset[str]:
         if w in _NEGATIONS:
             out.add("¬")
             continue
+        if w in _CONTRAST:
+            out.add("instead")
+            continue
         s = _stem(w)
-        if s in _POSITIVE or s.rstrip("s") in _POSITIVE or w in _POSITIVE:
+        if s in _POS_STEMS:
             out.add("+")
-        elif s in _NEGATIVE or w in _NEGATIVE:
+        elif s in _NEG_STEMS:
             out.add("-")
         else:
             out.add(w if w in _NUMBERS or any(c.isdigit() for c in w) else s)
@@ -139,9 +147,14 @@ def _covers(big: frozenset[str], small: frozenset[str]) -> bool:
     """True if `big` already says everything `small` says (and small has enough words to be a real claim)."""
     if len(small) < 2 or not small <= big:
         return False
-    # An entry that adds a negation, a number or an opposite attitude says something different, not more.
-    extra = big - small
-    return not (extra & ({"¬", "+", "-"} | {t for t in extra if t in _NUMBERS or any(c.isdigit() for c in t)}))
+    # An entry that adds a negation or an opposite attitude says something different, not more ("Loves noise" is not
+    # covered by "Hates noise, loves music"). Extra detail such as a number or another word only adds to the claim; a
+    # DIFFERENT number is already a mismatch, because then `small` is not contained in `big`.
+    markers = (big - small) & {"¬", "+", "-"}
+    # A negation in `big` that `small` lacks reverses the claim. An extra like/dislike only matters when `small`
+    # itself states an attitude (then `big` may say the opposite); an entry with no attitude ("Gets short with people
+    # who interrupt her") is still fully contained in "Hates being rushed and gets short with people who interrupt her".
+    return not ("¬" in markers or (markers and small & {"+", "-"}))
 
 # --- the validator --------------------------------------------------------------------------------------------
 

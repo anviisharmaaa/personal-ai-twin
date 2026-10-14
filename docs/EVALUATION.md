@@ -88,3 +88,43 @@ only part of the wording (food example) are not detected and are listed under QU
 **Not proven.** Whether the new prompt makes the model repeat less is untested until a live run. The validator removes
 repetition; it cannot judge that a quote supports a tendency, that wording is not embellished, or that guidance is
 sensible (for example the tautological "Respond in a quiet manner, reflecting Dev's quiet nature").
+
+## Third evaluation (`live_20261014_220756.json`): final offline tuning
+
+Critical checks all passed again; the raw-output check still failed in four cases (rich_contextual 10 exact + 12 near,
+sparse 1 sparse-limit trim, stated_sensitive 1 near, long 4 exact + 4 near). The file now holds the raw output and every
+removal, so this was read directly. (It records no dropped context tendency in any case; the one noted for the first
+run is not in this file.)
+
+**What the removal records show.** All 31 removals were correct: every "exact" one was identical text copied into a second
+section (money in two sections, "teases her closest friends constantly" in three); every "near" one was an entry fully
+contained in a context tendency or in a longer entry (each situational behaviour restated as a trait; one sentence of
+three interests split into three; "listens first" in two places). None removed a distinct fact, negation, number or
+opposite attitude, and none was justified by an ungrounded tendency. The sparse trim removed a guidance line that
+invented a topic ("consider referencing cricket"); the guidance that survived ("not pressuring him to speak more than he
+is comfortable with") still adds a comfort need the description never states.
+
+**Prompt.** Replaced the general "one fact, one place" with explicit field ownership: situational behaviour only in
+`context_tendencies`; interests only in `interests_and_habits` (one entry per sentence, never as a core trait); dislikes
+in boundaries or communication preferences, not both; reactions in one of response/empathy; a final "delete any entry
+another already says" pass. Rich descriptions must keep every distinct detail and every contradiction or exception.
+Guidance may not restate a trait or a context entry or invent topics, comfort levels, pressures or needs, and is `[]`
+for sparse input unless the description says how to treat the person. The summary may not add moods or adjectives
+("stays near the snack table" is not "withdrawn"). No new size cap was added.
+
+**Validator.** Removals were appropriate, so the rules were not loosened. Two corrections found while re-running the
+saved raw output: (1) the like/dislike detection compared whole words, so "loves/hates/dislikes" were not recognised
+as attitudes; they now compare stems, which makes the opposite-attitude guard actually work ("Loves noise" is not
+covered by "Hates noise but loves music"). (2) The guard against *extra numbers* in the covering entry was dropped
+(an extra number only adds detail; a different number already prevents a match), and an extra attitude blocks removal
+only when the shorter entry itself states an attitude. "instead of" and "rather than" count as the same contrast.
+Re-running the saved raw outputs: rich_contextual 10 exact / 16 near, long 4 / 5, stated_sensitive 0 / 1; the
+additional removals (a restated grandfather behaviour, "dislikes being rushed/interrupted" next to "hates being rushed
+and gets short with people who interrupt her", the food line reworded) were all read and are the same observation.
+Entries are still never rewritten, and a failing result still leaves the last good profile in place.
+
+**Evaluator.** Sparse input with any guidance now adds a REVIEW item. Raw-output cleanup is still a FAIL.
+
+**Not proven.** Whether the prompt reduces what the model produces is only known from a new live run. The validator
+cannot see reworded repeats that share only part of their wording ("after listening" vs "then"), unsupported guidance,
+or embellished wording; those stay human-review items.

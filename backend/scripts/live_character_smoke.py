@@ -167,6 +167,9 @@ def checks(name: str, text: str, profile: dict, adj: dict[str, int]) -> list[Che
         out.append(("critical", f"sparse input stays sparse (<={SPARSE_MAX_ENTRIES} entries across all lists)",
                     "PASS" if n <= SPARSE_MAX_ENTRIES else f"FAIL (got {n})"))
         out.append(("quality", "uncertainties listed", "PASS" if profile["uncertainties"] else "FAIL"))
+        g = profile["behavioural_guidance"]
+        out.append(("quality", "sparse input: guidance, if any, comes from the description (no invented topic, comfort "
+                    "level or need; read it)", "REVIEW " + str(g) if g else "PASS"))
     if name == "contradictory":
         blob = json.dumps(profile, ensure_ascii=False).lower()
         both = "generous" in blob and ("time" in blob or "messag" in blob)

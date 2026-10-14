@@ -130,28 +130,39 @@ apparent contradiction by picking a side.
 - Anything true only in a particular setting, with a particular person, or only for now (a recent mood or phase) \
 belongs in context_tendencies, or must use basis "context_dependent". Do not put it in core_traits or speaking_style \
 as if it were permanent.
-- One fact, one place. Before writing an entry, check that no earlier entry in ANY list already says it. Every entry \
-must add something new: a different behaviour, person, setting or example. Do not repeat a trait in several lists \
-unless each list gives different information about it. Do not restate the same example in different words, and do \
-not split one sentence of the description into several entries (three interests named in one line are ONE entry). \
-Choose the single best home: a behaviour that only happens with one person or in one setting goes in \
-context_tendencies ONLY, not again as a trait, speaking_style, warmth or relationship entry; a general trait goes in \
-the one list where it fits best.
-- Keep the profile small and driven by evidence. Never fill a list just because it exists; empty lists are normal. \
-Do not use generic personality stereotypes. A description of under 20 words is sparse: return at most 6 entries in \
-total across all lists, at most 3 uncertainties and at most 1 behavioural_guidance. For a richer description, keep \
-every distinct detail and nuance the text supports (different people, settings, habits, contradictions) rather than \
-shortening, but say each one once.
+- One fact, one home. Give every distinct fact a single canonical place and never copy it elsewhere. Pick the home \
+in this order:
+  1. true only with one person, in one setting, or for now -> context_tendencies (with its evidence) and NOWHERE else: \
+never repeat it as a core trait, speaking_style, warmth, humour, directness or relationship entry;
+  2. something she likes, loves or does for enjoyment -> interests_and_habits only, one entry per sentence of the \
+description (three interests named together are ONE entry); never as a core trait;
+  3. something she dislikes, avoids or will not discuss -> boundaries_and_careful_topics (or communication_preferences \
+if it is about how to talk to her), not both;
+  4. how she reacts to other people's state -> response_patterns or empathy_and_support, not both;
+  5. otherwise the single best-fitting field; core_traits is only for stable traits that hold everywhere.
+  Before answering, read your lists once and delete any entry that says what another entry already says, even in \
+different words (for example "teases friends constantly" in two sections, or "hates being rushed" next to "hates \
+being rushed and gets short"). Each entry must add a new behaviour, person, setting, number or exception.
+- Keep real differences. Different behaviour with different people, settings or circumstances stays as separate \
+entries; opposites, exceptions and contradictions are kept as written, never merged or averaged. Do not shrink a rich \
+description to a few lines: keep every distinct detail it supports, each stated once. Never fill a list just because \
+it exists; empty lists are normal. Do not use generic personality stereotypes. A description of under 20 words is \
+sparse: at most 6 entries in total across all lists, at most 3 uncertainties, and behavioural_guidance should be [] \
+unless the description itself says how to treat the person.
 - Do not diagnose, label mental or physical health conditions, or infer religion, politics, sexuality, ethnicity or \
 similar sensitive attributes. If the description itself states one, you may restate it in its own terms and mark it \
 "stated". Never name a specific religion or identity the description does not name, even when a practice might suggest \
 one.
 - Write plain, warm, specific English in the third person, keeping any quoted phrases in their original language.
-- "summary" is 2-4 sentences and may not just repeat the lists. "behavioural_guidance" is short, reusable guidance \
-for how an AI representation of this person should respond, grounded in the description; each line must give a \
-different instruction, must not merely restate a trait ("be quiet because they are quiet"), and must not add needs \
-or causes the description does not give. "uncertainties" lists what is genuinely ambiguous or missing: separate \
-short entries, each a different question, at most 5; do not list an area the description already covers.
+- "summary" is 2-4 sentences in plain words taken from the description: no adjective, motive or mood the \
+description does not use (do not turn "stays near the snack table" into "withdrawn"), and it should not list every \
+detail again. "behavioural_guidance" translates the description into a few instructions for how an AI representation \
+of this person should respond. It must NOT restate a trait ("be quiet because they are quiet"), must NOT repeat a \
+context entry, and must NOT invent topics to raise, activities to suggest, comfort levels, pressures or needs the \
+description does not give. Each line is a different instruction; if the description gives nothing to act on, \
+return []. \
+"uncertainties" lists what is genuinely ambiguous or missing: separate short entries, each a different question, \
+at most 5; do not list an area the description already covers.
 - Return only JSON matching the schema."""
 
 
