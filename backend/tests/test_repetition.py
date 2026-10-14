@@ -268,6 +268,24 @@ def test_sparse_profile_is_deduplicated_before_the_size_limit_and_stays_within_i
                                               "behavioural_guidance", "uncertainties")) <= 6
 
 
+def test_sparse_input_keeps_honest_uncertainties_tied_to_what_was_said() -> None:
+    raw = prof(core_traits=[item("Dev is quiet.")], interests_and_habits=[item("He likes cricket.")],
+               uncertainties=["Whether Dev is quiet in every setting or only with some people.",
+                              "Whether Dev plays cricket or only follows it."])
+    out, adj = ground(raw, DEV)
+    assert len(out.uncertainties) == 2 and adj.duplicates_dropped == 0 and adj.sparse_trimmed == 0
+    assert out.behavioural_guidance == []                      # nothing invented to fill the list
+
+
+def test_sparse_evaluation_flags_an_empty_uncertainty_list_and_accepts_specific_ones() -> None:
+    base = prof(core_traits=[item("Dev is quiet.")], interests_and_habits=[item("He likes cricket.")])
+    empty = checks("sparse", DEV, base.model_dump(), {})
+    assert next(c for c in empty if c[1] == "uncertainties listed")[2] == "FAIL"
+    filled = prof(core_traits=[item("Dev is quiet.")], uncertainties=["Whether Dev is quiet everywhere."])
+    ok = checks("sparse", DEV, filled.model_dump(), {})
+    assert next(c for c in ok if c[1] == "uncertainties listed")[2] == "PASS"
+
+
 def test_a_sparse_description_still_cannot_be_padded_with_distinct_invented_entries() -> None:
     padded = prof(core_traits=[item(f"Invented distinctive trait number {n} {w}")
                                for n, w in enumerate(["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta"])])
@@ -438,6 +456,14 @@ def test_saved_profile_and_api_responses_never_contain_raw_output_or_removed_ent
 
 # ---- the prompt asks for what the validator enforces ---------------------------------------------------------------
 
+
+def test_prompt_asks_for_specific_uncertainties_without_generic_filler() -> None:
+    low = " ".join(SYSTEM_PROMPT.lower().split())
+    for phrase in ("tied to something the description actually says", "one to three of them rather than an empty list",
+                   "never fill the list with generic gaps", "never guess an answer"):
+        assert phrase in low, phrase
+
+
 def test_prompt_assigns_one_home_per_fact_and_forbids_invented_guidance_and_keeps_the_earlier_rules() -> None:
     low = " ".join(SYSTEM_PROMPT.lower().split())
     for phrase in ("one fact, one home", "context_tendencies (with its evidence) and nowhere else",
@@ -446,5 +472,5 @@ def test_prompt_assigns_one_home_per_fact_and_forbids_invented_guidance_and_keep
                    "opposites, exceptions and contradictions are kept", "do not shrink a rich description",
                    "behavioural_guidance should be [] unless", "must not restate a trait",
                    "invent topics to raise", "do not turn \"stays near the snack table\" into \"withdrawn\"",
-                   "under 20 words", "character for character", "exact, contiguous quote", "each a different question"):
+                   "under 20 words", "character for character", "exact, contiguous quote", "separate, different question"):
         assert phrase in low, phrase

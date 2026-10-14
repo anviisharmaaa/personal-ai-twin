@@ -49,15 +49,42 @@ python -m scripts.live_character_smoke --eval     # then, if that passed: 8 more
 It prints authentication/model availability, schema validity, latency and token usage, and writes every returned profile to
 `backend\scripts\out\` (git-ignored). Paste the console output back to me; it contains no secrets. Do not paste the .env.
 
-## 2. Only after step 1 succeeds: test the Character workspace
-1. Settings: read the provider disclosure (it must name NVIDIA, not OpenAI) and accept. The consent is tied to the
-   provider, so switching `AI_PROVIDER` later asks you to agree again.
-2. Studio → Character: write a few **fictional** sentences (you will see a "Development AI provider" warning). Save description. Hard-refresh (Ctrl+F5): the text must still be there.
-3. Click "Understand this character": check you get an interpretation and the status reads "Up to date".
-4. Edit the text: the interpretation must be flagged as made from an earlier version. Click "Update the interpretation".
-5. Click it again without editing: it should say nothing has changed (no new model call).
-6. Settings → Withdraw consent: the analysis button must be disabled with an explanation. Agree again to re-enable.
-7. Open two tabs, edit in both, save in both: the second save must warn that the description changed elsewhere.
+## 2. Only after step 1 succeeds: test the Character workspace in the browser (LIVE, fictional text only)
+Start both servers (two terminals, venv active in the first):
+```powershell
+cd backend ; uvicorn app.main:app --reload --port 8000
+cd frontend ; npm run dev            # http://localhost:5173 (needs frontend\.env from .env.example)
+```
+`http://localhost:8000/ready` must show `"ai_provider": "nvidia"` and `"ai": true`. Use only the fictional text below
+(or your own invented text). Tick each line only after you have actually seen it.
+
+Fictional test description (copy exactly; it has several contexts):
+> Meera remembers everyone's birthdays. She teases her closest friends constantly but goes quiet and careful around
+> people she has just met. She never says 'I love you' out loud; she shows it by turning up with food. With her
+> grandfather she is soft-spoken and patient. At work she is direct and a bit blunt in meetings, but afterwards she
+> checks in with anyone she may have stung. She is loud and silly at family weddings.
+
+| # | Check | Expected |
+|---|-------|----------|
+| 1 | Settings: before consenting, open Studio, Character, try "Understand this character" | Disabled/blocked with an explanation; no request leaves for NVIDIA (DevTools, Network: no `/character/analyze` call). |
+| 2 | Settings: read the disclosure and accept | Text names **NVIDIA** and the trial/fictional-only warning; consent recorded. |
+| 3 | Studio, Character: paste the description, Save, then Ctrl+F5 | Exact original text is back; "Development AI provider" warning visible. |
+| 4 | Click "Understand this character" | A clear loading state (button busy, status announced), then status "Up to date". |
+| 5 | Read the profile | Each situation (grandfather, work meetings, weddings, friends, strangers) appears **once**, under "Depending on the situation", with a "From your description: ..." quote; no section repeats the same fact. Typical expressions, if any, are exact text from your description. |
+| 6 | Click again with no edit | Says nothing changed; Network shows no new `/analyze` model call. |
+| 7 | Edit one sentence, Save | Profile labelled as made from an earlier version ("Out of date"); old profile still shown. |
+| 8 | Click "Update the interpretation" | Loading, then "Up to date" with the new text reflected. |
+| 9 | Failure keeps the last profile: stop the backend, set `NVIDIA_API_KEY=invalid` in `backend\.env` (do not paste a real key anywhere), restart, edit the text, Save, analyse | A plain error message (not a crash), status stays "Out of date", **the previous profile is still displayed**, description intact. Then restore your real key and restart. |
+| 10 | Settings: withdraw consent | Analysis disabled with an explanation. Agree again to re-enable. |
+| 11 | Two tabs: edit and save in both | Second save warns the description changed elsewhere. |
+| 12 | Layout: DevTools device toolbar at 375 px and 1280 px | No horizontal scroll; buttons reachable; text readable. |
+| 13 | Theme: toggle light and dark (and the OS setting) | Every state in 4, 7, 9 readable in both; no invisible text. |
+| 14 | Keyboard and a11y: Tab through the page; run Lighthouse (Accessibility) or the axe DevTools extension on the Character page | Visible focus on every control; status messages announced; no serious/critical issues. |
+
+What is NOT covered here: the mocked suites (`pytest`, `npm run e2e`) exercise these same states against a **fake** API and
+fake analysis; they do not prove the NVIDIA path works in your browser. Only this table does. Rows 5 and 9 are the
+ones that prove the displayed profile is the validated one and that a failure does not overwrite it. Write down any row
+that fails with what you saw; do not skip it.
 
 ## 3. Leaked-password protection
 Supabase docs state it is available on the **Pro plan and above**. Dashboard: Authentication → Sign In / Providers →

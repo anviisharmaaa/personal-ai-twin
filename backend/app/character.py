@@ -161,8 +161,13 @@ of this person should respond. It must NOT restate a trait ("be quiet because th
 context entry, and must NOT invent topics to raise, activities to suggest, comfort levels, pressures or needs the \
 description does not give. Each line is a different instruction; if the description gives nothing to act on, \
 return []. \
-"uncertainties" lists what is genuinely ambiguous or missing: separate short entries, each a different question, \
-at most 5; do not list an area the description already covers.
+"uncertainties" names the specific things the description leaves open that matter for representing this \
+person, each tied to something the description actually says: whether a stated trait holds everywhere or only in \
+some settings or with some people, how a stated interest or habit shows up, what a described reaction depends on. A \
+short description usually leaves several such questions, so give one to three of them rather than an empty list; \
+a long, detailed description may leave only a few. Each is a separate, different question, at most 5. Never fill \
+the list with generic gaps unrelated to the text (job, age, family, humour) and never guess an answer; do not list \
+an area the description already covers.
 - Return only JSON matching the schema."""
 
 
