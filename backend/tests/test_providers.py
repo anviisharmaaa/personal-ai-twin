@@ -6,6 +6,7 @@ hosted endpoint accepts this request; that is only proven by `python -m scripts.
 
 import json
 from collections.abc import Callable, Iterator
+from pathlib import Path
 
 import httpx
 import pytest
@@ -379,3 +380,17 @@ def test_truncated_analysis_keeps_the_last_good_profile_and_the_users_text(clien
     assert me["character"]["status"] == "outdated"                  # and honestly marked as made from older text
     assert me["character"]["failure"] == "truncated"
     get_settings.cache_clear()
+
+
+def test_tests_ignore_the_developers_env_file_and_environment(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guard for the isolation fixture: a real-looking provider in .env or the shell must not reach mocked tests."""
+    import os
+
+    env = tmp_path / ".env"
+    env.write_text("AI_PROVIDER=nvidia\nNVIDIA_API_KEY=nvapi-not-real\n")
+    monkeypatch.chdir(env.parent)                 # Settings looks for ".env" in the working directory
+    get_settings.cache_clear()
+    s = get_settings()
+    assert s.ai_provider == "" and s.nvidia_api_key == "" and consent_version(s) == "2026-10-v3-none"
+    assert not any(k.startswith(("NVIDIA_", "OPENAI_")) for k in os.environ)
