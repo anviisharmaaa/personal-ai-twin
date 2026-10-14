@@ -1,0 +1,15 @@
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+[tool.ruff.lint]
+select = ["E","F","I","B","S"]
+ignore = ["S101"]
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.File", "fastapi.Form", "fastapi.Header"]

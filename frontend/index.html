@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#201C15" />
+    <meta name="description" content="Madhuora — what matters, carried forward." />
+    <link rel="icon" type="image/png" href="/brand/madhuora-logo-gold.png" />
+    <title>Madhuora</title>
+    <script>
+      // Set theme before first paint to avoid a flash. Storage may be unavailable.
+      (function () {
+        var t = "system";
+        try { t = localStorage.getItem("madhuora-theme") || "system"; } catch (e) {}
+        var dark = t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

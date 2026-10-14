@@ -1,0 +1,118 @@
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+/* ---------- Brand palette (approved) ---------- */
+:root {
+  --wine-black: #211016;
+  --warm-charcoal: #201c15;
+  --bronze-shadow: #30291d;
+  --deep-maroon: #68283b;
+  --antique-gold: #e9c878;
+  --muted-red: #c94f45;
+  --warm-ivory: #faf5ed;
+  --porcelain: #ffffff;
+  --pale-sand: #f1e8d5;
+  --soft-gold: #d5b15e;
+  --deep-red: #963c35;
+  --champagne: #fff4e7;
+}
+
+/* ---------- Semantic tokens: LIGHT ---------- */
+:root,
+:root[data-theme="light"] {
+  --bg: #faf5ed;
+  --surface: #ffffff;
+  --surface-2: #fff4e7;
+  --border: #e8dcd4;
+  --fg: #302126;
+  --fg-muted: #75666a;
+  --brand: #68283b;
+  --on-brand: #faf5ed;
+  --accent: #68283b;
+  --danger: #963c35;
+  --on-danger: #ffffff;
+  --success: #3d6b4a;
+  --ring: #68283b;
+  --glow-a: rgba(233, 200, 120, 0.28);
+  --glow-b: rgba(104, 40, 59, 0.1);
+  color-scheme: light;
+}
+
+/* ---------- Semantic tokens: DARK ---------- */
+:root[data-theme="dark"] {
+  --bg: #201c15;
+  --surface: #30291d;
+  --surface-2: #211016;
+  --border: #4a4130;
+  --fg: #faf5ed;
+  --fg-muted: #b9aea2;
+  --brand: #e9c878;
+  --on-brand: #211016;
+  --accent: #e9c878;
+  --danger: #e2756b;
+  --on-danger: #211016;
+  --success: #8fc79d;
+  --ring: #e9c878;
+  --glow-a: rgba(233, 200, 120, 0.12);
+  --glow-b: rgba(104, 40, 59, 0.45);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-fg: var(--fg);
+  --color-muted: var(--fg-muted);
+  --color-brand: var(--brand);
+  --color-on-brand: var(--on-brand);
+  --color-accent: var(--accent);
+  --color-danger: var(--danger);
+  --color-on-danger: var(--on-danger);
+  --color-success: var(--success);
+  --color-ring: var(--ring);
+  --color-maroon: var(--deep-maroon);
+  --color-gold: var(--antique-gold);
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --spacing: 4px;
+}
+
+html, body, #root { min-height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+/* Ambient atelier light: two slow-drifting glows behind everything. */
+.atelier-bg { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+.atelier-bg::before, .atelier-bg::after {
+  content: ""; position: absolute; width: 70vmax; height: 70vmax; border-radius: 50%;
+  filter: blur(60px); will-change: transform;
+}
+.atelier-bg::before { background: radial-gradient(closest-side, var(--glow-a), transparent); top: -30vmax; left: -15vmax; animation: drift-a 38s ease-in-out infinite alternate; }
+.atelier-bg::after { background: radial-gradient(closest-side, var(--glow-b), transparent); bottom: -35vmax; right: -20vmax; animation: drift-b 46s ease-in-out infinite alternate; }
+@keyframes drift-a { to { transform: translate3d(8vmax, 6vmax, 0); } }
+@keyframes drift-b { to { transform: translate3d(-8vmax, -5vmax, 0); } }
+
+@keyframes orbit { to { transform: rotate(360deg); } }
+@keyframes shimmer { to { background-position: -200% 0; } }
+.skeleton {
+  background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--fg) 9%, transparent) 50%, transparent 70%) 0 0 / 200% 100%, var(--surface-2);
+  animation: shimmer 1.6s linear infinite; border-radius: var(--radius-md);
+}
+
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 6px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}
