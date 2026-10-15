@@ -194,7 +194,7 @@ test.describe("Twin Studio", () => {
 });
 
 test.describe("honest availability", () => {
-  for (const [path, title] of [["conversations", "Conversations"], ["memories", "Memories"], ["voice", "Voice"], ["automations", "Automations"]] as const) {
+  for (const [path, title] of [["voice", "Voice"], ["automations", "Automations"]] as const) {
     test(`${title} says it is not available and offers no fake controls`, async ({ page }) => {
       await mockApp(page, newBackend({ consent: true, steps: ["welcome", "identity", "personality"], twin: fullTwin() }));
       await page.goto(`/app/${path}`);

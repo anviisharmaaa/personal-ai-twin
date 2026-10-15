@@ -8,8 +8,8 @@ import { Logo } from "./Logo";
 const NAV: { to: string; label: string; icon: IconName; end?: boolean; soon?: boolean }[] = [
   { to: "/app", label: "Home", icon: "home", end: true },
   { to: "/app/studio", label: "Twin Studio", icon: "studio" },
-  { to: "/app/conversations", label: "Conversations", icon: "chat", soon: true },
-  { to: "/app/memories", label: "Memories", icon: "memory", soon: true },
+  { to: "/app/conversations", label: "Conversations", icon: "chat" },
+  { to: "/app/memories", label: "Memories", icon: "memory" },
   { to: "/app/voice", label: "Voice", icon: "voice", soon: true },
   { to: "/app/automations", label: "Automations", icon: "clock", soon: true },
   { to: "/app/settings", label: "Settings", icon: "settings" },

@@ -6,6 +6,8 @@ export class ApiError extends Error {
     public status: number,
     message: string,
     public code?: string,
+    /** The whole error detail from the server, for errors that carry extra data (e.g. which memories conflict). */
+    public extra?: Record<string, unknown>,
   ) {
     super(message);
   }
@@ -39,7 +41,7 @@ async function request<T>(method: string, path: string, body?: unknown, form?: F
     const d = json.detail;
     if (d && typeof d === "object" && "message" in d) {
       const o = d as { code?: string; message: string };
-      throw new ApiError(res.status, o.message, o.code);
+      throw new ApiError(res.status, o.message, o.code, d as Record<string, unknown>);
     }
     throw new ApiError(res.status, typeof d === "string" ? d : "Something went wrong.");
   }
@@ -49,6 +51,7 @@ async function request<T>(method: string, path: string, body?: unknown, form?: F
 export const api = {
   get: <T>(p: string) => request<T>("GET", p),
   put: <T>(p: string, b: unknown) => request<T>("PUT", p, b),
+  patch: <T>(p: string, b: unknown) => request<T>("PATCH", p, b),
   post: <T>(p: string, b?: unknown) => request<T>("POST", p, b),
   del: (p: string) => request<void>("DELETE", p),
   upload: <T>(p: string, f: FormData) => request<T>("POST", p, undefined, f),

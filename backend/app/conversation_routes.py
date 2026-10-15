@@ -76,7 +76,7 @@ def _public_conversation(c: dict[str, Any]) -> dict[str, Any]:
 
 def _public_message(m: dict[str, Any]) -> dict[str, Any]:
     return {k: m.get(k) for k in ("id", "role", "content", "status", "reply_to", "provider", "model", "first_token_ms",
-                                  "duration_ms", "failure_code", "used_memory_ids", "created_at")}
+                                  "duration_ms", "failure_code", "used_memory_ids", "created_at", "client_message_id")}
 
 
 async def _conversation(rest: SupabaseRest, user: AuthUser, cid: str) -> dict[str, Any]:

@@ -5,7 +5,7 @@ import { Skeleton } from "./components/ui";
 import { AuthCallback, AuthPage, ResetPassword } from "./pages/AuthPages";
 import { Dashboard } from "./pages/Dashboard";
 import { Landing } from "./pages/Landing";
-import { Automations, Conversations, Memories, Voice } from "./pages/Placeholders";
+import { Automations, Voice } from "./pages/Placeholders";
 
 const Fallback = () => <Skeleton className="h-64" />;
 
@@ -31,8 +31,8 @@ export const router = createBrowserRouter([
         { index: true, element: <Dashboard /> },
         { path: "onboarding", lazy: async () => ({ Component: (await import("./pages/Onboarding")).Onboarding, HydrateFallback: Fallback }) },
         { path: "studio", lazy: async () => ({ Component: (await import("./pages/TwinStudio")).TwinStudio, HydrateFallback: Fallback }) },
-        { path: "conversations", element: <Conversations /> },
-        { path: "memories", element: <Memories /> },
+        { path: "conversations", lazy: async () => ({ Component: (await import("./pages/Conversations")).Conversations, HydrateFallback: Fallback }) },
+        { path: "memories", lazy: async () => ({ Component: (await import("./pages/Memories")).Memories, HydrateFallback: Fallback }) },
         { path: "voice", element: <Voice /> },
         { path: "automations", element: <Automations /> },
         { path: "settings", lazy: async () => ({ Component: (await import("./pages/Settings")).Settings, HydrateFallback: Fallback }) },
