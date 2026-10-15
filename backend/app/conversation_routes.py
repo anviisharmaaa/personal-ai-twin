@@ -69,6 +69,12 @@ class MessageIn(BaseModel):
         return v
 
 
+def _profile_state(twin: dict[str, Any] | None, row: dict[str, Any] | None) -> str:
+    if not row or row.get("profile") is None:
+        return "missing"
+    return "current" if twin and row.get("description_version") == twin.get("character_version") else "outdated"
+
+
 def _public_conversation(c: dict[str, Any]) -> dict[str, Any]:
     return {k: c.get(k) for k in ("id", "title", "created_at", "last_activity_at", "archived_at",
                                   "learning_reviewed_at", "learning_failure_code")}
@@ -98,6 +104,7 @@ async def chat_status(user: AuthUser = Depends(current_user), rest: SupabaseRest
     twin = await _twin(rest, user)
     consent = await _active_consent(rest, user)
     row = await get_profile_row(rest, user, twin["id"]) if twin else None
+    has_description = bool(twin and (twin.get("character_description") or "").strip())
     reason: str | None = None
     if twin is None:
         reason = "no_twin"
@@ -107,13 +114,13 @@ async def chat_status(user: AuthUser = Depends(current_user), rest: SupabaseRest
         reason = "ai_disabled"
     elif consent is None or consent.get("version") != consent_version(s):
         reason = "consent_required"
-    elif not (row and row.get("profile") is not None):
-        reason = "no_profile"
+    elif not has_description:
+        reason = "no_character"      # the description is the character; a generated profile is optional
     return {
         "available": reason is None, "reason": reason, "provider": provider.provider,
         "is_sample": provider.provider == "mock", "model_busy": model_gate.busy,
-        "profile_outdated": bool(row and twin and row.get("profile") is not None
-                                 and row.get("description_version") != twin.get("character_version")),
+        "profile_state": _profile_state(twin, row),
+        "profile_outdated": _profile_state(twin, row) == "outdated",
         "limits": {"max_user_chars": s.chat_max_user_chars, "context_messages": s.chat_context_messages},
     }
 
@@ -233,10 +240,12 @@ async def stream_message(cid: str, body: MessageIn, user: AuthUser = Depends(cur
         code = provider.code if isinstance(provider, UnavailableChat) else "not_configured"
         msg = provider.message if isinstance(provider, UnavailableChat) else "Chat isn't set up on the server yet."
         raise _err(code, msg, status.HTTP_503_SERVICE_UNAVAILABLE)
-    row = await get_profile_row(rest, user, twin["id"])
-    if not row or row.get("profile") is None:
-        raise _err("no_profile", "Understand the character first: chat uses the validated profile.",
+    description = (twin.get("character_description") or "").strip()
+    if not description:
+        raise _err("no_character", "Describe your character first: every reply is guided by that description.",
                    status.HTTP_409_CONFLICT)
+    row = await get_profile_row(rest, user, twin["id"])      # optional, supplementary guidance
+    pstate = _profile_state(twin, row)
 
     since = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     recent = await rest.select(user.token, "messages", {
@@ -273,11 +282,12 @@ async def stream_message(cid: str, body: MessageIn, user: AuthUser = Depends(cur
     if model_gate.busy:     # a quick refusal; the real slot is taken when the stream starts (below)
         raise _err("model_busy", "The local model is busy with another task. Try again in a moment.",
                    status.HTTP_429_TOO_MANY_REQUESTS)
-    profile = row["profile"]
+    profile = row["profile"] if row and pstate != "missing" else None
     memories = await _active_memories(rest, user, twin["id"])
     recent_user = [m["content"] for m in history if m["role"] == "user"][-1:]
     chosen = rank_memories(memories, body.content + " " + " ".join(recent_user), s.chat_memory_limit)
-    sys_text = system_prompt(twin.get("name") or "", profile, twin.get("character_description") or "", chosen)
+    sys_text = system_prompt(twin.get("name") or "", profile, description, chosen,
+                             profile_outdated=pstate == "outdated")
     ctx = build_context(sys_text, history, body.content, max_messages=s.chat_context_messages,
                         max_chars=s.chat_context_chars)
 
@@ -304,7 +314,7 @@ async def stream_message(cid: str, body: MessageIn, user: AuthUser = Depends(cur
         "model": provider.model, "is_sample": provider.provider == "mock", "replayed": False,
         "context": {"earlier_messages_used": ctx.used_turns, "earlier_messages_total": ctx.total_turns,
                     "trimmed": ctx.trimmed},
-        "profile_outdated": row.get("description_version") != twin.get("character_version"),
+        "profile_state": pstate, "profile_outdated": pstate == "outdated",
         "memories_used": [{"id": m["id"], "statement": m["statement"]} for m in chosen],
     }
     hint = looks_like_correction(body.content)

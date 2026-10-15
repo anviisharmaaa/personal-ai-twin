@@ -52,7 +52,7 @@ def _stub_ollama() -> Starlette:
                 await asyncio.sleep(0.05)
                 yield b[mid:]
                 await asyncio.sleep(0.3)
-            usage = {"prompt_tokens": 50, "completion_tokens": 8}
+            usage = {"prompt_tokens": 2000, "completion_tokens": 8}
             yield chunk({"choices": [{"delta": {}, "finish_reason": "stop"}], "usage": usage})
             yield b"data: [DONE]\n\n"
         return StreamingResponse(gen(), media_type="text/event-stream")

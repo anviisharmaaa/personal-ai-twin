@@ -12,10 +12,20 @@ const open = async (page: import("@playwright/test").Page, ch = newChat(), theme
 
 test.describe("conversations", () => {
   test("explains why chat is unavailable and blocks sending", async ({ page }) => {
-    await open(page, newChat({ reason: "no_profile" }));
-    await expect(page.getByText("Understand the character first")).toBeVisible();
+    await open(page, newChat({ reason: "no_character" }));
+    await expect(page.getByText("Describe your character first")).toBeVisible();
     await expect(page.getByLabel("Message")).toBeDisabled();
     await expect(page.getByRole("link", { name: "Open Twin Studio" })).toBeVisible();
+  });
+
+  test("chat works without a profile and says replies follow the description", async ({ page }) => {
+    const ch = await open(page, newChat({ profileState: "missing" }));
+    await expect(page.getByText("replies follow your description alone")).toBeVisible();
+    await expect(page.getByLabel("Message")).toBeEnabled();
+    await page.getByLabel("Message").fill("Hi Meera");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.getByText("Hello there, friend.").first()).toBeVisible();
+    expect(ch.calls.some((c) => c.path.endsWith("/messages/stream"))).toBe(true);
   });
 
   test("sends a message, shows the reply once, and keeps it after a reload", async ({ page }) => {

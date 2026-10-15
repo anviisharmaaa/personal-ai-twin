@@ -17,7 +17,7 @@ type Mem = Cand & { source_deleted: boolean; edited: boolean; pinned: boolean; s
 type Prop = { id: string; memory_id: string; section: string; current_text: string; proposed_text: string; kind: string; evidence: string[]; status: string; created_at: string; resolved_at: null };
 
 export type ChatBackend = {
-  reason: string | null; isSample: boolean; modelBusy: boolean; profileOutdated: boolean;
+  reason: string | null; isSample: boolean; modelBusy: boolean; profileOutdated: boolean; profileState: string;
   /** ok: stream a reply. fail: stream a failure after some text. hang: never answer (for Stop). refuse: HTTP error. */
   mode: "ok" | "fail" | "hang" | "refuse"; reply: string; refuseCode: string;
   convs: Conv[]; msgs: Record<string, Msg[]>; learning: boolean;
@@ -27,7 +27,7 @@ export type ChatBackend = {
 };
 
 export const newChat = (init: Partial<ChatBackend> = {}): ChatBackend => ({
-  reason: null, isSample: false, modelBusy: false, profileOutdated: false, mode: "ok", reply: "Hello there, friend.", refuseCode: "model_busy",
+  reason: null, isSample: false, modelBusy: false, profileOutdated: false, profileState: "current", mode: "ok", reply: "Hello there, friend.", refuseCode: "model_busy",
   convs: [], msgs: {}, learning: false, candidates: [], memories: [], proposals: [], revisions: [], reviewing: false, reviewResult: [],
   conflictOnApprove: false, calls: [], n: 0, ...init,
 });
@@ -56,7 +56,7 @@ export async function mockChat(page: Page, ch: ChatBackend) {
 
     if (path === "/api/v1/chat/status") {
       return json({ available: ch.reason === null, reason: ch.reason, provider: ch.isSample ? "mock" : "ollama", is_sample: ch.isSample, model_busy: ch.modelBusy,
-        profile_outdated: ch.profileOutdated, limits: { max_user_chars: 4000, context_messages: 24 } });
+        profile_state: ch.profileState, profile_outdated: ch.profileOutdated, limits: { max_user_chars: 4000, context_messages: 24 } });
     }
     if (path === "/api/v1/conversations" && m === "GET") return json({ conversations: ch.convs });
     if (path === "/api/v1/conversations" && m === "POST") {

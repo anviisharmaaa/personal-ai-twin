@@ -13,7 +13,7 @@ import { StreamError, streamMessage, type StartedInfo } from "../lib/sse";
 const REASONS: Record<string, { text: string; to?: string; label?: string }> = {
   no_twin: { text: "Create your twin’s identity first.", to: "/app/onboarding", label: "Set up your twin" },
   consent_required: { text: "Chat needs your permission to process text with the AI provider this server uses.", to: "/app/settings", label: "Open Settings" },
-  no_profile: { text: "Chat uses the validated interpretation of your description. Understand the character first.", to: "/app/studio", label: "Open Twin Studio" },
+  no_character: { text: "Describe your character first: every reply is guided by that description.", to: "/app/studio", label: "Open Twin Studio" },
   ai_disabled: { text: "AI is temporarily switched off on this server." },
   ai_off: { text: "No AI provider is selected on this server, so chat is off." },
   not_configured: { text: "The chosen AI provider isn’t fully set up on this server." },
@@ -256,7 +256,10 @@ export function Conversations() {
         <div className="mt-4"><Notice>{reason.text} {reason.to && <Link to={reason.to} className="font-medium underline underline-offset-4">{reason.label}</Link>}</Notice></div>
       )}
       {status.data?.available && status.data.profile_outdated && (
-        <div className="mt-4"><Notice>Your description changed after the last interpretation, so replies still use the older one. <Link to="/app/studio" className="font-medium underline underline-offset-4">Update it in Twin Studio</Link>.</Notice></div>
+        <div className="mt-4"><Notice>Your description changed after the last interpretation, so replies use your new description, with the older interpretation as secondary guidance only. <Link to="/app/studio" className="font-medium underline underline-offset-4">Update it in Twin Studio</Link>.</Notice></div>
+      )}
+      {status.data?.available && status.data.profile_state === "missing" && (
+        <div className="mt-4"><Notice>There is no structured interpretation of your character yet, so replies follow your description alone. <Link to="/app/studio" className="font-medium underline underline-offset-4">Understand the character in Twin Studio</Link> for extra guidance.</Notice></div>
       )}
       {status.data?.available && status.data.model_busy && !busy && (
         <div className="mt-4"><Notice>The local model is busy with another job (for example understanding the character). A new reply will wait for it to finish — try again in a moment.</Notice></div>

@@ -13,7 +13,7 @@ export type Message = {
 };
 export type ChatStatus = {
   available: boolean; reason: string | null; provider: string; is_sample: boolean; model_busy: boolean;
-  profile_outdated: boolean; limits: { max_user_chars: number; context_messages: number };
+  profile_state?: "missing" | "current" | "outdated"; profile_outdated: boolean; limits: { max_user_chars: number; context_messages: number };
 };
 export type Evidence = { message_id: string; quote: string };
 export type Candidate = {
