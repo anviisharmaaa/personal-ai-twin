@@ -30,6 +30,43 @@ Context window: Ollama silently truncates prompts longer than its context length
 
 Tested (mocked HTTP, `tests/test_character_fidelity.py`): the real request body contains the full description first on every reply; profile/missing/outdated states; description edits; per-user isolation; approved vs pending memories; history order; the truncation guard. Not verifiable without a real model: how faithfully a given Ollama model follows the description - run `scripts/live_chat_smoke.py` against your local Ollama.
 
+## Natural, short replies and faster local chat
+
+**Audit (before).** Chat called Ollama's OpenAI-compatible `/v1/chat/completions` with `reasoning_effort: "none"` (whether
+`/v1` honours that for qwen3.5 is version-dependent and was never verified), `max_tokens: 1024`, and a prompt whose only
+brevity instruction was "keep replies reasonably short". It already streamed genuinely, used no extra model call per
+message (learning review is an explicit action, never per message) and loaded one description, one profile and at most
+`CHAT_MEMORY_LIMIT` memories.
+
+**Changes (settings).**
+
+| Setting | Before | Now |
+|---|---|---|
+| Endpoint for chat | `/v1/chat/completions` | native `/api/chat` (derived from `OLLAMA_BASE_URL`; analysis/learning stay on `/v1`) |
+| Thinking | `reasoning_effort: "none"` (unverified) | `think: false` (`CHAT_THINK=false`), the documented native switch |
+| Output ceiling | `max_tokens` 1024 | `options.num_predict` 128 (`CHAT_MAX_OUTPUT_TOKENS`, 16 to 4096). Analysis (3000/4096) and learning (1536) limits are separate and unchanged |
+| Keep model loaded | server default (5 min) | `keep_alive` 30m (`CHAT_KEEP_ALIVE`) |
+| Context window | server default | unchanged unless `CHAT_NUM_CTX` is set |
+| Prompt | one line on brevity | conversational rules (below) plus a one-line reminder at the very end of the system message |
+
+A reply that reaches the ceiling is stored as `incomplete` (`truncated`), never `complete`; the UI says it was cut off.
+Raise `CHAT_MAX_OUTPUT_TOKENS` if you want longer answers by default.
+
+**Prompt rules.** Short by default (usually 1 to 3 short sentences, often under 40 words, greetings in a couple of words),
+natural variation instead of uniform length, longer only when asked or warranted, no padding or recap, a follow-up question
+only when natural, emoji/slang only if the character would, no "As an AI" / "How can I assist you today?" boilerplate, and
+no one universal friendly voice. The honesty rules remain: a sincere question about being an AI or about how Madhuora works
+gets a plain, honest answer, real-world abilities are never claimed, and distress overrides jokes. The original description
+stays first and authoritative; the profile stays supplementary; memories stay per character.
+
+**Diagnostics.** Each reply logs one `chat_timing` line (logger `madhuora.chat`): provider, model, status, first-token ms,
+total ms, Ollama's load / prompt-evaluation / generation times, prompt and output token counts, size of any reasoning text
+the model still produced, history turns used, and the generation settings. Never message text, names or secrets.
+
+**Measuring.** `python -m scripts.chat_latency_bench` (live, your Ollama, invented character) replays the same messages
+through the old request shape and the new one, reports first-token / total time, word counts, boilerplate and reasoning
+flags, and the effect of 0 / 6 / 24 earlier messages. The mocked tests prove what is *sent*; they say nothing about speed.
+
 ## Characters and conversations: who is being addressed
 
 **Schema (audited, reused, not duplicated).** A character is a row of `twins` (name, portrait, original description, version); its structured profile is `character_profiles`; its memories, candidates, proposals and revisions each carry `twin_id`. An account has exactly one personal self-twin (`kind = 'self'`, enforced by the partial unique index `twins_one_self_per_owner`) and up to 25 total records: any number of extra `kind = 'character'` rows. The first `twins_kind_check` / `twins_one_per_owner` constraints blocked this, which was the real reason a second character could not be created; migration `20261015200000_multiple_characters.sql` replaces them (see MIGRATIONS.md). No second character table exists.

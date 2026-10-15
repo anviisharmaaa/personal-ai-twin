@@ -39,6 +39,17 @@ from app.supabase_rest import SupabaseError, SupabaseRest, get_rest
 router = APIRouter(prefix="/api/v1")
 log = logging.getLogger("madhuora.chat")
 
+
+def _log_timing(provider: Any, state: str, failure: str | None, meta: Any, ctx: Any) -> None:
+    """One diagnostics line per reply: numbers and settings only, never message text, names or secrets."""
+    summary: dict[str, Any] = getattr(provider, "settings_summary", dict)()
+    log.info("chat_timing provider=%s model=%s status=%s failure=%s first_token_ms=%s total_ms=%s load_ms=%s "
+             "prompt_eval_ms=%s eval_ms=%s prompt_tokens=%s output_tokens=%s thinking_chars=%s history_turns=%s/%s "
+             "settings=%s", provider.provider, getattr(provider, "model", "-"), state, failure or "-",
+             meta.first_token_ms, meta.duration_ms, meta.load_ms, meta.prompt_eval_ms, meta.eval_ms,
+             meta.prompt_tokens, meta.completion_tokens, meta.thinking_chars, ctx.used_turns, ctx.total_turns,
+             summary)
+
 # Conversations with a reply being generated in THIS process. A message row still marked "streaming" that is not in
 # here belongs to a process that died, and is shown as incomplete.
 _streaming: set[str] = set()
@@ -398,12 +409,13 @@ async def stream_message(cid: str, body: MessageIn, user: AuthUser = Depends(cur
                     raise ChatError("empty_response", "The model sent back an empty answer.", 502)
                 if meta.finish_reason == "length":
                     state, failure = "incomplete", "truncated"
-                    err_msg = "The reply hit the length limit and was cut off."
+                    err_msg = "The reply reached the length limit and was cut off. Ask for more and I\u2019ll continue."
             except ChatError as exc:
                 state, failure, err_msg = "failed", exc.code, exc.message
                 log.warning("chat_failed code=%s provider=%s detail=%s", exc.code, provider.provider, exc.detail or "-")
             if meta.duration_ms is None:
                 meta.duration_ms = int((asyncio.get_running_loop().time() - t0) * 1000)
+            _log_timing(provider, state, failure, meta, ctx)
             try:
                 await _finalize(rest, user, cid, asst["id"], content="".join(parts), state=state, failure=failure,
                                 meta=meta, used=mem_ids)

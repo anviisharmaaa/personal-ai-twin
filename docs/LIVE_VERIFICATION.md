@@ -191,3 +191,15 @@ Status today: mocked (backend, vitest, Playwright) and real-socket-with-stub-mod
    reload, a second conversation with the same character, and that lists never mix. It prints both replies; you judge
    whether each sounds like its own character. Exit code 0 = all checks passed.
 4. In the browser: Twin Studio -> "+ New character" -> Conversations -> choose the character -> send a message -> reload.
+
+## 9. Natural short replies and speed (LIVE; the numbers below are yours to produce)
+
+1. Pull, restart the backend. Ollama running with your model (`OLLAMA_CHARACTER_MODEL`).
+2. `python -m scripts.chat_latency_bench --repeat 2`. It prints BEFORE (old `/v1` request, old prompt) and AFTER (current
+   request) for the same invented character and messages, the history-length sweep and a summary. Read the replies:
+   do they sound like the character, stay short on casual messages, answer "are you an AI?" honestly, and go longer when
+   asked for detail (they may be cut at the ceiling: that is shown as "incomplete").
+3. In the app, watch the backend log while chatting: each reply logs a `chat_timing` line (`reasoning chars` / `thinking_chars`
+   should be 0; `load_ms` is large only on the first message after a pause).
+4. If a follow-up fails with `context_too_small`, Ollama reported fewer prompt tokens than the prompt has (possibly because it
+   reused a cached prefix). Set `CHAT_NUM_CTX` (for example 8192) and tell me; that guard is deliberately strict.

@@ -1,0 +1,137 @@
+"""Natural, short, in-character replies and fast local chat. MOCKED: the real OllamaChatProvider over
+httpx.MockTransport, so these prove what Madhuora SENDS to Ollama and how it handles the answer; the speed itself is
+measured live (scripts/chat_latency_bench.py), never here."""
+# ruff: noqa: F811
+from __future__ import annotations
+
+import logging
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+
+from app.chat import OllamaChatProvider, build_chat_provider, system_prompt
+from app.config import Settings
+from tests.fake_supabase import FakeSupabase
+from tests.test_character_fidelity import DESC, PROFILE, Capture, prep
+from tests.test_chat import _reset, ollama_env, parse_sse, send  # noqa: F401  (fixtures re-exported below)  # noqa: F401
+
+
+def native(**kw: object) -> OllamaChatProvider:
+    return OllamaChatProvider("http://localhost:11434/v1", "qwen3.5:9b", max_output_tokens=128, first_token_timeout=5,
+                              total_timeout=30, transport=httpx.MockTransport(lambda r: httpx.Response(200)), **kw)  # type: ignore[arg-type]
+
+
+# ---- the prompt ----------------------------------------------------------------------------------------------------
+
+def test_prompt_asks_for_short_conversational_replies_with_natural_variation() -> None:
+    text = system_prompt("Meera", PROFILE, DESC, [])
+    assert "usually one to three short sentences" in text and "well under 40 words" in text
+    assert "A greeting can be a couple of words" in text and "yes/no question can get a direct answer" in text
+    assert "Vary naturally" in text and "Do not give every reply the same shape or length" in text
+    assert "Go longer only when the user asks for detail" in text           # not a rigid limit
+    assert "Never pad" in text and "Do not repeat back what the user just said" in text
+    assert "emojis" in text and "not in every message" in text
+    assert "only if this character would" in text                           # emojis/slang belong to the character
+    assert "Ask a question back only when it comes naturally" in text
+
+
+def test_prompt_discourages_assistant_boilerplate() -> None:
+    text = system_prompt("Meera", PROFILE, DESC, [])
+    for phrase in ("As an AI", "I'm just a language model", "How can I assist you today?", "I'm here to help"):
+        assert phrase in text                                               # named only in the "never say" rule
+    assert 'Never say things like "As an AI"' in text
+    assert "none of them sounds like a helpful chatbot" in text
+
+
+def test_prompt_keeps_honesty_about_being_an_ai_and_real_world_limits() -> None:
+    text = system_prompt("Meera", PROFILE, DESC, [])
+    assert "Staying in character is not deception" in text
+    assert "sincerely asks whether you are an AI, or how Madhuora works" in text
+    assert "answer honestly and plainly" in text
+    assert "Never claim real-world abilities you do not have" in text
+    assert "seems to be in danger or serious distress" in text             # safety preserved
+
+
+def test_the_character_stays_authoritative_and_the_style_reminder_comes_last() -> None:
+    text = system_prompt("Meera", PROFILE, DESC, [{"category": "preference", "statement": "likes chai", "scope": ""}])
+    assert "<original_description> AUTHORITATIVE" in text and DESC in text
+    assert text.index("<original_description>") < text.index("<character_profile>") < text.index("<approved_memories>")
+    assert text.rstrip().endswith("No assistant phrasing, no padding.")
+    assert "mannerisms" in text and "emotional reactions" in text           # personality is still the source of style
+    assert "Each character sounds like themselves" in text                  # no universal friendly personality
+
+
+# ---- the request that really goes to Ollama --------------------------------------------------------------------------
+
+def test_chat_request_uses_the_native_api_with_thinking_off_and_the_chat_output_limit(
+        client: TestClient, fake: FakeSupabase, ollama_env: None) -> None:
+    h, cid, cap = prep(client, fake)
+    assert send(client, h, cid, "heyy").status_code == 200
+    body = cap.bodies[-1]
+    assert body["think"] is False                                           # the documented native switch
+    assert body["stream"] is True and body["options"]["num_predict"] == 64  # the provider's own configured ceiling
+    assert "max_tokens" not in body and "reasoning_effort" not in body      # the /v1 spellings are not mixed in
+    assert body["keep_alive"] == "30m"
+    assert body["messages"][0]["role"] == "system" and DESC in body["messages"][0]["content"]
+
+
+def test_native_endpoint_is_derived_from_the_configured_v1_url() -> None:
+    assert native()._url == "http://localhost:11434/api/chat"
+    p = OllamaChatProvider("http://localhost:11434", "m", max_output_tokens=16, first_token_timeout=5, total_timeout=30)
+    assert p._url == "http://localhost:11434/api/chat"
+    s = native().settings_summary()
+    assert s["think"] is False and s["num_predict"] == 128 and s["endpoint"] == "native /api/chat"
+
+
+def test_num_ctx_is_sent_only_when_configured() -> None:
+    assert "num_ctx" not in native()._payload([])["options"]
+    assert native(num_ctx=8192)._payload([])["options"]["num_ctx"] == 8192
+    assert native(think=True)._payload([])["think"] is True                 # an explicit opt-in, never the default
+
+
+# ---- limits: chat is separate from analysis and learning -------------------------------------------------------
+
+def test_chat_limit_is_configurable_and_other_features_keep_their_own_limits() -> None:
+    s = Settings(_env_file=None)                                           # type: ignore[call-arg]
+    assert s.chat_max_output_tokens == 128 and s.chat_think is False
+    assert s.analysis_max_output_tokens == 3000 and s.ollama_max_output_tokens == 4096
+    assert s.learning_max_output_tokens == 1536                             # untouched by the chat change
+    custom = Settings(_env_file=None, chat_max_output_tokens=200, ai_provider="ollama", ollama_character_model="m")  # type: ignore[call-arg]
+    chat = build_chat_provider(custom)
+    assert isinstance(chat, OllamaChatProvider) and chat.settings_summary()["num_predict"] == 200
+    assert custom.ollama_max_output_tokens == 4096                          # analysis limit did not move
+
+
+def test_analysis_still_uses_the_v1_endpoint_and_its_own_token_limit() -> None:
+    from app.providers import OllamaAnalyzer
+    a = OllamaAnalyzer("http://localhost:11434/v1", "m", 60.0, 4096, allowed=True)
+    assert a._max_out == 4096 and a.PROVIDER == "ollama"
+
+
+# ---- behaviour of the stream and the saved result ---------------------------------------------------------------
+
+def test_a_reply_that_hits_the_ceiling_is_saved_as_incomplete_not_complete(
+        client: TestClient, fake: FakeSupabase, ollama_env: None) -> None:
+    from tests.test_chat import new_conversation, ready_user, use
+    h = ready_user(client, fake)
+    cap = Capture(reason="length")
+    use(cap.provider)
+    cid = new_conversation(client, h)
+    ev = parse_sse(send(client, h, cid, "tell me everything").text)
+    assert ev[-1][0] == "error" and ev[-1][1]["code"] == "truncated" and ev[-1][1]["partial_saved"] is True
+    a = [m for m in fake.tables["messages"] if m["role"] == "assistant"][0]
+    assert a["status"] == "incomplete" and a["content"] == "Sure."
+
+
+def test_timing_diagnostics_are_logged_without_message_content(
+        client: TestClient, fake: FakeSupabase, ollama_env: None, caplog: pytest.LogCaptureFixture) -> None:
+    h, cid, cap = prep(client, fake)
+    with caplog.at_level(logging.INFO, logger="madhuora.chat"):
+        send(client, h, cid, "my secret plan is purple elephants")
+    line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("chat_timing"))
+    for field in ("first_token_ms=", "total_ms=", "output_tokens=2", "prompt_tokens=", "status=complete",
+                  "num_predict"):
+        assert field in line, field
+    assert "think" in line
+    assert "purple elephants" not in caplog.text and "Sure." not in caplog.text and DESC not in caplog.text

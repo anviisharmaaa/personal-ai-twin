@@ -58,7 +58,18 @@ class Settings(BaseSettings):
     # is told), never silently pretended to be remembered.
     chat_context_messages: int = Field(default=24, ge=2, le=100)
     chat_context_chars: int = Field(default=12000, ge=1000, le=60000)
-    chat_max_output_tokens: int = Field(default=1024, ge=64, le=4096)
+    # Ceiling on one chat reply (Ollama options.num_predict). A safety limit, not a target: the prompt asks for short
+    # replies. Separate from analysis_/ollama_/learning_ output limits, which are unchanged. Raise it if you want longer
+    # replies; a reply that reaches it is stored as "incomplete", never as complete.
+    chat_max_output_tokens: int = Field(default=128, ge=16, le=4096)
+    # Chat talks to Ollama's NATIVE /api/chat (derived from OLLAMA_BASE_URL) so that thinking can be switched off with
+    # the documented `think` flag. False = no reasoning phase for ordinary character chat.
+    chat_think: bool = False
+    chat_temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    # Context window to request per chat call (options.num_ctx). 0 = leave it to the Ollama server's own setting.
+    chat_num_ctx: int = Field(default=0, ge=0, le=131072)
+    # How long Ollama keeps the model loaded after a reply, so the next message does not pay the load time again.
+    chat_keep_alive: str = Field(default="30m", pattern=r"^(-1|0|\d+(\.\d+)?(ms|s|m|h))$")
     chat_max_user_chars: int = Field(default=4000, ge=100, le=20000)
     # A cold local model must load and read the prompt before its first token, so this is generous but bounded.
     chat_first_token_timeout_seconds: float = Field(default=300.0, ge=5.0, le=1800.0)

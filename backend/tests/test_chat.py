@@ -470,7 +470,18 @@ def ollama(handler: Any) -> OllamaChatProvider:
 
 
 def data(obj: dict[str, Any]) -> bytes:
-    return b"data: " + json.dumps(obj, ensure_ascii=False).encode() + b"\n\n"
+    """One record of Ollama's native streaming format: a JSON object per line."""
+    return json.dumps(obj, ensure_ascii=False).encode() + b"\n"
+
+
+def piece(text: str) -> dict[str, Any]:
+    return {"message": {"role": "assistant", "content": text}, "done": False}
+
+
+def final(reason: str = "stop", prompt: int = 7, out: int = 3) -> dict[str, Any]:
+    return {"message": {"role": "assistant", "content": ""}, "done": True, "done_reason": reason,
+            "prompt_eval_count": prompt, "eval_count": out, "load_duration": 2_000_000_000,
+            "prompt_eval_duration": 300_000_000, "eval_duration": 900_000_000}
 
 
 async def collect(p: OllamaChatProvider) -> tuple[list[str], StreamMeta]:
@@ -485,35 +496,35 @@ async def collect(p: OllamaChatProvider) -> tuple[list[str], StreamMeta]:
 
 @pytest.mark.anyio
 async def test_ollama_stream_parses_deltas_across_arbitrary_byte_boundaries() -> None:
-    body = (data({"choices": [{"delta": {"content": "Namaste "}}]}) + data({"choices": [{"delta": {"content": "दोस्त 😀"}}]})
-            + data({"choices": [{"delta": {"reasoning": "hidden thinking"}}]})
-            + data({"choices": [{"delta": {}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 7, "completion_tokens": 3}})
-            + b"data: [DONE]\n\n")
+    body = (data(piece("Namaste ")) + data(piece("दोस्त 😀"))
+            + data({"message": {"role": "assistant", "content": "", "thinking": "hidden thinking"}, "done": False})
+            + data(final()))
     cut = body.index("दोस्त".encode()) + 2           # split in the middle of a 3-byte character
     seen: dict[str, Any] = {}
 
     def handler(req: httpx.Request) -> httpx.Response:
         seen.update(json.loads(req.content))
-        return httpx.Response(200, headers={"content-type": "text/event-stream"},
+        return httpx.Response(200, headers={"content-type": "application/x-ndjson"},
                               stream=Chunks([body[:cut], body[cut:cut + 1], body[cut + 1:cut + 40], body[cut + 40:]]))
 
     deltas, meta = await collect(ollama(handler))
     assert "".join(deltas) == "Namaste दोस्त 😀" and "hidden" not in "".join(deltas)
     assert meta.finish_reason == "stop" and meta.prompt_tokens == 7 and meta.first_token_ms is not None
-    assert seen["stream"] is True and seen["max_tokens"] == 256 and seen["model"] == "qwen-test:9b"
+    assert seen["stream"] is True and seen["model"] == "qwen-test:9b"
+    assert meta.load_ms == 2000 and meta.prompt_eval_ms == 300 and meta.eval_ms == 900 and meta.thinking_chars == 15
 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(("handler", "code"), [
     (lambda req: (_ for _ in ()).throw(httpx.ConnectError("refused", request=req)), "local_unavailable"),
-    (lambda req: httpx.Response(404, json={"error": {"message": "model 'x' not found"}}), "local_model_missing"),
+    (lambda req: httpx.Response(404, json={"error": "model 'x' not found"}), "local_model_missing"),
     (lambda req: httpx.Response(401, json={}), "provider_auth"),
     (lambda req: httpx.Response(500, json={}), "provider_error"),
-    (lambda req: httpx.Response(200, stream=Chunks([b"data: {not json}\n\n"])), "invalid_stream"),
+    (lambda req: httpx.Response(200, stream=Chunks([b"{not json}\n"])), "invalid_stream"),
     (lambda req: httpx.Response(200, stream=Chunks([], httpx.ReadTimeout("slow"))), "first_token_timeout"),
-    (lambda req: httpx.Response(200, stream=Chunks([data({"choices": [{"delta": {"content": "a"}}]})],
+    (lambda req: httpx.Response(200, stream=Chunks([data(piece("a"))],
                                                    httpx.ReadTimeout("stalled"))), "generation_timeout"),
-    (lambda req: httpx.Response(200, stream=Chunks([data({"choices": [{"delta": {"content": "a"}}]})],
+    (lambda req: httpx.Response(200, stream=Chunks([data(piece("a"))],
                                                    httpx.RemoteProtocolError("cut"))), "interrupted"),
 ])
 async def test_ollama_stream_errors_are_specific_and_content_free(handler: Any, code: str) -> None:

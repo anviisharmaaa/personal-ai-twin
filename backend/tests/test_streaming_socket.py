@@ -41,22 +41,21 @@ def _serve(asgi: object, port: int) -> tuple[uvicorn.Server, threading.Thread]:
 def _stub_ollama() -> Starlette:
     async def completions(request: object) -> StreamingResponse:
         def chunk(obj: dict[str, object]) -> bytes:
-            return b"data: " + json.dumps(obj, ensure_ascii=False).encode() + b"\n\n"
+            return json.dumps(obj, ensure_ascii=False).encode() + b"\n"
 
         async def gen() -> AsyncIterator[bytes]:
             await asyncio.sleep(0.3)                                    # "thinking" before the first word
             for word in ("Namaste ", "दोस्त ", "kaise ", "ho?"):
-                b = chunk({"choices": [{"delta": {"content": word}}]})
+                b = chunk({"message": {"role": "assistant", "content": word}, "done": False})
                 mid = len(b) // 2 + 1
                 yield b[:mid]                                           # may cut a UTF-8 character in half
                 await asyncio.sleep(0.05)
                 yield b[mid:]
                 await asyncio.sleep(0.3)
-            usage = {"prompt_tokens": 2000, "completion_tokens": 8}
-            yield chunk({"choices": [{"delta": {}, "finish_reason": "stop"}], "usage": usage})
-            yield b"data: [DONE]\n\n"
-        return StreamingResponse(gen(), media_type="text/event-stream")
-    return Starlette(routes=[Route("/v1/chat/completions", completions, methods=["POST"])])
+            yield chunk({"message": {"role": "assistant", "content": ""}, "done": True, "done_reason": "stop",
+                         "prompt_eval_count": 2000, "eval_count": 8})
+        return StreamingResponse(gen(), media_type="application/x-ndjson")
+    return Starlette(routes=[Route("/api/chat", completions, methods=["POST"])])
 
 
 @pytest.fixture

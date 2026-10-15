@@ -25,7 +25,8 @@ PERSONA = ["authoritative", "mannerisms", "emotional reactions", "Do not recite"
 class Capture:
     """A real OllamaChatProvider whose HTTP layer records each request body and answers with a tiny valid stream."""
 
-    def __init__(self, prompt_tokens: int = 4000) -> None:
+    def __init__(self, prompt_tokens: int = 4000, reason: str = "stop") -> None:
+        self.reason = reason
         self.bodies: list[dict[str, Any]] = []
         self.provider = OllamaChatProvider("http://localhost:11434/v1", "qwen-test:9b", max_output_tokens=64,
                                            first_token_timeout=5, total_timeout=30,
@@ -34,10 +35,11 @@ class Capture:
 
     def _handle(self, req: httpx.Request) -> httpx.Response:
         self.bodies.append(json.loads(req.content))
-        chunk = {"choices": [{"delta": {"content": "Sure."}}]}
-        end = {"choices": [{"delta": {}, "finish_reason": "stop"}], "usage": {"prompt_tokens": self.prompt_tokens, "completion_tokens": 2}}
-        body = f"data: {json.dumps(chunk)}\n\ndata: {json.dumps(end)}\n\ndata: [DONE]\n\n".encode()
-        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+        chunk = {"message": {"role": "assistant", "content": "Sure."}, "done": False}
+        end = {"message": {"role": "assistant", "content": ""}, "done": True, "done_reason": self.reason,
+               "prompt_eval_count": self.prompt_tokens, "eval_count": 2}
+        body = (json.dumps(chunk) + "\n" + json.dumps(end) + "\n").encode()
+        return httpx.Response(200, content=body, headers={"content-type": "application/x-ndjson"})
 
     @property
     def system(self) -> str:
