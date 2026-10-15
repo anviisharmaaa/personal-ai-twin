@@ -15,6 +15,7 @@ from app.character_store import (
     sha256,
     stored_provider,
 )
+from app.chat import model_gate
 from app.config import get_settings
 from app.providers import build_analyzer, consent_version, provider_model
 from app.routes import _active_consent, _eq, _twin, _with_portrait_url
@@ -150,9 +151,13 @@ async def analyze_character(
     # A local model can take minutes, longer than a browser request should stay open. So the request returns at once
     # (202) and the work continues in the background; the page polls /me, which reports analysis.state honestly.
     # The description, the previous profile and the failure record are only ever changed by _run_analysis.
+    fresh = await _twin(rest, user) or twin       # read before taking any slot: nothing below may raise
+    if provider == "ollama" and not model_gate.try_acquire():
+        # One local-model job at a time: say so rather than queueing silently behind a chat reply.
+        raise _err("model_busy", "The local model is busy with another job. Try again in a moment.",
+                   status.HTTP_429_TOO_MANY_REQUESTS)
     _in_flight.add(twin["id"])
     background.add_task(_run_analysis, rest, user, twin, description, version, digest, row, analyzer, provider)
-    fresh = await _twin(rest, user) or twin
     return JSONResponse({"character": character_view(fresh, row), "cached": False},
                         status_code=status.HTTP_202_ACCEPTED)
 
@@ -199,3 +204,5 @@ async def _run_analysis(rest: SupabaseRest, user: AuthUser, twin: dict[str, Any]
         await _record_failure(rest, user, twin["id"], "internal_error", row)
     finally:
         _in_flight.discard(twin["id"])
+        if provider == "ollama":
+            model_gate.release()

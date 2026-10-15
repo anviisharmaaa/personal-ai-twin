@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 
 from app.character_routes import router as character_router
 from app.config import get_settings
+from app.conversation_routes import router as conversation_router
 from app.providers import active_provider, ollama_endpoint_ok, provider_ready
 from app.routes import router
 from app.supabase_rest import SupabaseError
@@ -16,10 +17,11 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_list,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-        allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
+        allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "Accept"],
     )
     app.include_router(router)
     app.include_router(character_router)
+    app.include_router(conversation_router)
 
     @app.exception_handler(SupabaseError)
     async def supabase_error(_: Request, exc: SupabaseError) -> JSONResponse:

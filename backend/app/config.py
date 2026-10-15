@@ -52,6 +52,25 @@ class Settings(BaseSettings):
     analysis_daily_limit: int = 10
     analysis_timeout_seconds: float = 60.0
     analysis_max_output_tokens: int = 3000
+    # ---- Chat (Phase 4). Provider is the same explicit AI_PROVIDER; chat is allowed only for local Ollama (and the
+    # labelled sample generator). All limits are configurable and hard-bounded.
+    # Messages and characters of earlier history sent to the model, newest first; older turns are dropped (and the UI
+    # is told), never silently pretended to be remembered.
+    chat_context_messages: int = Field(default=24, ge=2, le=100)
+    chat_context_chars: int = Field(default=12000, ge=1000, le=60000)
+    chat_max_output_tokens: int = Field(default=1024, ge=64, le=4096)
+    chat_max_user_chars: int = Field(default=4000, ge=100, le=20000)
+    # A cold local model must load and read the prompt before its first token, so this is generous but bounded.
+    chat_first_token_timeout_seconds: float = Field(default=300.0, ge=5.0, le=1800.0)
+    chat_total_timeout_seconds: float = Field(default=900.0, ge=10.0, le=3600.0)
+    chat_messages_per_hour: int = Field(default=120, ge=1, le=5000)
+    chat_memory_limit: int = Field(default=8, ge=0, le=30)
+    # Local-model jobs (chat replies, character analysis, learning review) that may run at once. 1 on purpose:
+    # concurrent runs on one CPU/GPU make every one of them slower.
+    local_model_concurrency: int = Field(default=1, ge=1, le=4)
+    # Conversational learning: how many of the newest user messages one review reads.
+    learning_review_messages: int = Field(default=40, ge=2, le=200)
+    learning_max_candidates: int = Field(default=8, ge=1, le=20)
     cors_origins: str = "http://localhost:5173"
 
     @property

@@ -13,7 +13,23 @@ from typing import Any
 import httpx
 
 OWNER_COL = {"profiles": "id", "twins": "owner_id", "onboarding_steps": "user_id", "consents": "user_id",
-             "character_profiles": "owner_id", "ai_usage": "owner_id"}
+             "character_profiles": "owner_id", "ai_usage": "owner_id", "conversations": "owner_id",
+             "messages": "owner_id", "learning_preferences": "owner_id", "memory_candidates": "owner_id",
+             "memories": "owner_id", "profile_proposals": "owner_id", "profile_revisions": "owner_id"}
+# Column defaults the real database applies (the routes rely on a few of them).
+DEFAULTS: dict[str, dict[str, Any]] = {
+    "conversations": {"title": "New conversation", "archived_at": None, "learning_reviewed_at": None},
+    "messages": {"content": "", "used_memory_ids": [], "client_message_id": None, "reply_to": None, "provider": None,
+                 "model": None, "first_token_ms": None, "duration_ms": None, "failure_code": None},
+    "learning_preferences": {"enabled": False, "enabled_at": None, "disabled_at": None, "disclosure_version": None},
+    "memory_candidates": {"statement": "", "scope": "", "supporting": [], "status": "pending", "rejected_reason": None,
+                          "reviewed_at": None, "conversation_id": None},
+    "memories": {"scope": "", "supporting": [], "source_deleted": False, "edited": False, "pinned": False,
+                 "status": "active", "superseded_by": None, "candidate_id": None, "conversation_id": None},
+    "profile_proposals": {"status": "pending", "current_text": None, "resolved_at": None, "evidence": [],
+                          "memory_id": None},
+    "profile_revisions": {"proposal_id": None},
+}
 RESERVED = {"select", "order", "limit", "on_conflict"}
 
 
@@ -51,6 +67,15 @@ class FakeSupabase:
                     return False
             elif v.startswith("gte."):
                 if str(row.get(k, "")) < v[4:]:
+                    return False
+            elif v.startswith("lt."):
+                if str(row.get(k, "")) >= v[3:]:
+                    return False
+            elif v.startswith("neq."):
+                if str(row.get(k)) == v[4:]:
+                    return False
+            elif v.startswith("in.(") and v.endswith(")"):
+                if str(row.get(k)) not in v[4:-1].split(","):
                     return False
         return True
 
@@ -93,12 +118,23 @@ class FakeSupabase:
                 for r in rows:
                     if r["user_id"] == uid and r["step"] == body["step"]:
                         return httpx.Response(201, json=[r])
+            if table == "messages" and body.get("role") == "user" and body.get("client_message_id") is not None and any(
+                    r["conversation_id"] == body["conversation_id"] and r.get("role") == "user"
+                    and r.get("client_message_id") == body["client_message_id"] for r in rows):
+                return httpx.Response(409, json={"code": "23505"})  # unique idempotency index
+            if table == "messages" and not any(
+                    c["id"] == body.get("conversation_id") and str(c["owner_id"]) == uid
+                    for c in self.tables["conversations"]):
+                return httpx.Response(403, json={"code": "42501"})  # RLS: only inside your own conversation
+            if table == "learning_preferences" and any(str(r[col]) == uid for r in rows):
+                return httpx.Response(409, json={"code": "23505"})
             self._n += 1
             now = datetime.now(timezone.utc).isoformat()
             row = {"id": f"id-{self._n}", "personality": {}, "communication": {}, "appearance": {},
                    "character_description": "", "character_version": 0, "created_at": now,
                    "portrait_path": None, "portrait_permission_confirmed": False,
-                   "granted_at": "2026-10-14T00:00:00Z", "withdrawn_at": None, **body}
+                   "granted_at": "2026-10-14T00:00:00Z", "withdrawn_at": None, "last_activity_at": now,
+                   **DEFAULTS.get(table, {}), **body}
             rows.append(row)
             return httpx.Response(201, json=[row])
         if req.method == "PATCH":
@@ -108,8 +144,20 @@ class FakeSupabase:
             return httpx.Response(200, json=visible)
         if req.method == "DELETE":
             self.tables[table] = [r for r in rows if r not in visible]
+            for gone in visible:
+                self._cascade(table, gone["id"])
             return httpx.Response(204)
         return httpx.Response(405)
+
+    def _cascade(self, table: str, row_id: str) -> None:
+        """What the foreign keys do in the real schema when a conversation is deleted."""
+        if table != "conversations":
+            return
+        self.tables["messages"] = [m for m in self.tables["messages"] if m["conversation_id"] != row_id]
+        for t in ("memory_candidates", "memories"):
+            for r in self.tables[t]:
+                if r.get("conversation_id") == row_id:
+                    r["conversation_id"] = None
 
     def _storage(self, req: httpx.Request, uid: str, rest: str) -> httpx.Response:
         bucket, _, name = rest.partition("/")
