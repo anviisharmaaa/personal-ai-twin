@@ -108,7 +108,8 @@ Nothing here has been run by Claude: the cloud workspace cannot reach your Ollam
 2. Choose a model by RAM/VRAM and verify its name at ollama.com/library. Approximate download sizes: `qwen3.5:4b` 3.3 GB, `qwen3.5:9b` 6.6 GB. Pull only after you approve the size: `ollama pull <model>`; confirm with `ollama list`.
 3. Run the server with a larger context: `$env:OLLAMA_CONTEXT_LENGTH=16384; ollama serve`.
 4. In `backend/.env`: `AI_PROVIDER=ollama`, `OLLAMA_CHARACTER_MODEL=<installed name>` (no key needed).
-5. Smoke test: `python scripts/live_character_smoke.py` (fictional sample, error test, then optionally `--eval`).
-   Your own text, locally only: `python scripts/live_character_smoke.py --text-file mine.txt` (output in git-ignored `scripts/out/`).
-6. Browser checklist = section 2, but with the Ollama notice (local processing, Supabase still stores data) and these descriptions: one short, one detailed, one with contrasting behaviours. Also stop Ollama and confirm the "local model unavailable" error keeps the previous profile, and switch provider to confirm consent re-review.
-7. Unverified until you run it: `/v1` acceptance of `response_format` json_schema and `reasoning_effort` for your model (if rejected, set `OLLAMA_JSON_MODE=prompt`), speed, and profile quality.
+5. First, confirm what is really running (read-only, no secrets): `python -m scripts.check_local` — it compares the provider your `.env` selects with what the RUNNING backend reports at `/ready`, and checks Ollama and the installed model. Restart the backend after any `.env` change.
+6. Smoke test: `python -m scripts.live_character_smoke` (fictional sample, error test, then optionally `--eval`).
+   Your own text, locally only: `python -m scripts.live_character_smoke --text-file mine.txt` (output in git-ignored `scripts/out/`).
+7. Browser checklist = section 2, but with the Ollama notice (local processing, Supabase still stores data) and these descriptions: one short, one detailed, one with contrasting behaviours. Also stop Ollama and confirm the "local model unavailable" error keeps the previous profile, and switch provider to confirm consent re-review.
+8. Unverified until you run it: `/v1` acceptance of `response_format` json_schema and `reasoning_effort` for your model (if rejected, set `OLLAMA_JSON_MODE=prompt`), speed, and profile quality.
