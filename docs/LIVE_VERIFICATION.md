@@ -203,3 +203,12 @@ Status today: mocked (backend, vitest, Playwright) and real-socket-with-stub-mod
    should be 0; `load_ms` is large only on the first message after a pause).
 4. If a follow-up fails with `context_too_small`, Ollama reported fewer prompt tokens than the prompt has (possibly because it
    reused a cached prefix). Set `CHAT_NUM_CTX` (for example 8192) and tell me; that guard is deliberately strict.
+
+## 10. Latency investigation and the refined prompt (LIVE)
+
+1. `python -m scripts.chat_latency_probe --reps 3` (about 5 to 15 minutes depending on speed). Copy its sections 1 to 5 back.
+   Look first at section 1 (is the model fully in GPU memory?) and section 4 (cache hit against miss).
+2. `python -m scripts.chat_latency_bench --repeat 2` for the personality comparison; read the replies. Check: varied lengths,
+   no repeated openers or catchphrases in every message, empathy before jokes when you say something sad, no "remember when"
+   inventions, a plain honest answer to "are you an AI?", a real answer to a real question.
+3. If a cached follow-up fails with `context_too_small`, the probe prints a WARNING in section 4; tell me.

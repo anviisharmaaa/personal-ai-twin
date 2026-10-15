@@ -189,15 +189,22 @@ async def main() -> int:
         return 2
     print(f"warm-up (model load etc.): first {warm['first_ms']} ms, total {warm['total_ms']} ms, load {warm.get('load_ms')} ms\n")
     before, after = [], []
+    # Each variant runs as one BLOCK so Ollama's prompt cache can work inside it (alternating BEFORE/AFTER on every
+    # message would give every call a different prompt start and defeat the cache). The block order flips each repeat.
     for rep in range(args.repeat):
-        for msg in MESSAGES:
-            print(f"[{rep + 1}] user: {msg}")
-            b = await run_before(model, s.ollama_base_url, [], msg, s.chat_total_timeout_seconds)
-            a = await run_after(provider, [], msg)
-            line("BEFORE", b)
-            line("AFTER", a)
-            before.append(b)
-            after.append(a)
+        blocks = ["BEFORE", "AFTER"] if rep % 2 == 0 else ["AFTER", "BEFORE"]
+        for name in blocks:
+            print(f"\n--- repeat {rep + 1}: {name} block ---")
+            for msg in MESSAGES:
+                print(f"user: {msg}")
+                if name == "BEFORE":
+                    b = await run_before(model, s.ollama_base_url, [], msg, s.chat_total_timeout_seconds)
+                    line("BEFORE", b)
+                    before.append(b)
+                else:
+                    a = await run_after(provider, [], msg)
+                    line("AFTER", a)
+                    after.append(a)
     print("\n=== history length (AFTER settings, same final message) ===")
     for n in (0, 6, 24):
         hist = [ChatMessage(role, text) for role, text in (PADDING * 4)[:n]]

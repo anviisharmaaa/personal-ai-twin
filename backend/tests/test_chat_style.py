@@ -24,42 +24,81 @@ def native(**kw: object) -> OllamaChatProvider:
 
 # ---- the prompt ----------------------------------------------------------------------------------------------------
 
-def test_prompt_asks_for_short_conversational_replies_with_natural_variation() -> None:
+def test_prompt_asks_for_varied_conversational_lengths_not_one_formula() -> None:
     text = system_prompt("Meera", PROFILE, DESC, [])
-    assert "usually one to three short sentences" in text and "well under 40 words" in text
-    assert "A greeting can be a couple of words" in text and "yes/no question can get a direct answer" in text
-    assert "Vary naturally" in text and "Do not give every reply the same shape or length" in text
-    assert "Go longer only when the user asks for detail" in text           # not a rigid limit
+    assert "Length follows the moment" in text
+    for step in ("a single word", "one short sentence", "a line or two", "a few conversational lines"):
+        assert step in text, step
+    assert "longer only when the user asks for detail or a story" in text      # not a rigid limit
+    assert "Do not settle into one shape" in text
     assert "Never pad" in text and "Do not repeat back what the user just said" in text
-    assert "emojis" in text and "not in every message" in text
-    assert "only if this character would" in text                           # emojis/slang belong to the character
     assert "Ask a question back only when it comes naturally" in text
 
 
-def test_prompt_discourages_assistant_boilerplate() -> None:
+def test_prompt_discourages_repeating_signature_phrases_without_naming_any() -> None:
     text = system_prompt("Meera", PROFILE, DESC, [])
-    for phrase in ("As an AI", "I'm just a language model", "How can I assist you today?", "I'm here to help"):
-        assert phrase in text                                               # named only in the "never say" rule
-    assert 'Never say things like "As an AI"' in text
-    assert "none of them sounds like a helpful chatbot" in text
+    assert "A voice is more than its catchphrases" in text and "sparingly and unevenly" in text
+    assert "Do not open or close with the same word, greeting, laugh or emoji" in text
+    assert "read your earlier replies in this conversation" in text
+    # The rules are written for every character: no one character's slang is baked into them.
+    for borrowed in ("yaar", "haha", "chal", "lowercase", "beta", "dude", "bro"):
+        assert borrowed not in text.lower(), borrowed
 
 
-def test_prompt_keeps_honesty_about_being_an_ai_and_real_world_limits() -> None:
+def test_prompt_puts_feelings_first_and_makes_teasing_context_sensitive() -> None:
     text = system_prompt("Meera", PROFILE, DESC, [])
+    assert "Feelings come first" in text and "in the way this character cares for people (as described)" in text
+    assert "rush to fix it or hand out advice unless they ask" in text
+    assert "do not tease or joke unless the description says this character does so" in text
+    assert "A teasing character teases when the mood is light and gentles when it is not" in text
+    assert "drop any joking, respond with real care" in text                    # the distress safeguard remains
+
+
+def test_prompt_forbids_inventing_a_shared_past_or_real_world_promises() -> None:
+    text = system_prompt("Meera", PROFILE, DESC, [])
+    assert "Never invent a shared past" in text
+    for banned in ("events you did together", "earlier conversations", "promises", "personal history"):
+        assert banned in text, banned
+    assert "not in the description, the approved memories or this conversation" in text
+    assert "say so in your own way instead of pretending to remember" in text
+    assert "Do not promise to do things in the real world" in text
+
+
+def test_prompt_answers_real_questions_and_stays_honest_about_being_an_ai() -> None:
+    text = system_prompt("Meera", PROFILE, DESC, [])
+    assert "Real questions get real answers" in text and "A quirk is a style, not a reason to dodge" in text
+    assert "Put the most useful part first" in text                            # survives the output ceiling better
     assert "Staying in character is not deception" in text
-    assert "sincerely asks whether you are an AI, or how Madhuora works" in text
-    assert "answer honestly and plainly" in text
-    assert "Never claim real-world abilities you do not have" in text
-    assert "seems to be in danger or serious distress" in text             # safety preserved
+    assert "an AI, a bot or a real person, or how Madhuora works" in text
+    assert "you are an AI voicing this character, not a real person" in text
+    assert "Never claim to be human" in text and "do not bring it up or add a disclaimer" in text
+    for phrase in ("As an AI", "I'm just a language model", "How can I assist you today?", "I'm here to help"):
+        assert phrase in text                                                  # only inside the "never say" rule
+    assert 'Never say things like "As an AI"' in text
 
 
 def test_the_character_stays_authoritative_and_the_style_reminder_comes_last() -> None:
     text = system_prompt("Meera", PROFILE, DESC, [{"category": "preference", "statement": "likes chai", "scope": ""}])
     assert "<original_description> AUTHORITATIVE" in text and DESC in text
     assert text.index("<original_description>") < text.index("<character_profile>") < text.index("<approved_memories>")
-    assert text.rstrip().endswith("No assistant phrasing, no padding.")
+    assert text.rstrip().endswith("No assistant phrasing.")
+    assert "Feelings first when the user is hurting" in text.rsplit("Reminder:", 1)[1]
     assert "mannerisms" in text and "emotional reactions" in text           # personality is still the source of style
     assert "Each character sounds like themselves" in text                  # no universal friendly personality
+
+
+def test_two_characters_get_their_own_style_source_and_the_same_neutral_rules() -> None:
+    blunt = "Bram is a blunt retired carpenter who speaks in few words and never uses emojis."
+    gushy = "Lila is an effusive florist who loves exclamation marks and pet names."
+    a, b = system_prompt("Bram", None, blunt, []), system_prompt("Lila", None, gushy, [])
+    assert blunt in a and gushy not in a and gushy in b and blunt not in b
+    assert a.split("The character's creator calls them")[0] == b.split("The character's creator calls them")[0]
+
+
+def test_the_fixed_rules_stay_within_a_size_budget() -> None:
+    """The rules are re-read by the model on every uncached message, so growth costs first-token time."""
+    from app.chat import STYLE_REMINDER, SYSTEM_RULES
+    assert len(SYSTEM_RULES) < 6500 and len(STYLE_REMINDER) < 400
 
 
 # ---- the request that really goes to Ollama --------------------------------------------------------------------------

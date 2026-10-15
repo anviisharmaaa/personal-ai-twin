@@ -52,10 +52,14 @@ message (learning review is an explicit action, never per message) and loaded on
 A reply that reaches the ceiling is stored as `incomplete` (`truncated`), never `complete`; the UI says it was cut off.
 Raise `CHAT_MAX_OUTPUT_TOKENS` if you want longer answers by default.
 
-**Prompt rules.** Short by default (usually 1 to 3 short sentences, often under 40 words, greetings in a couple of words),
-natural variation instead of uniform length, longer only when asked or warranted, no padding or recap, a follow-up question
-only when natural, emoji/slang only if the character would, no "As an AI" / "How can I assist you today?" boilerplate, and
-no one universal friendly voice. The honesty rules remain: a sincere question about being an AI or about how Madhuora works
+**Prompt rules.** Length follows the moment (a word, a sentence, a line or two, a few lines, longer only when asked or
+warranted, without settling into one shape), no padding or recap, a follow-up question only when natural, no "As an AI" /
+"How can I assist you today?" boilerplate, and no one universal friendly voice. Refined after real use: catchphrases, slang,
+laughter, greetings and emojis are used sparingly and unevenly and openers are not repeated; feelings come first (the
+character's own way of caring, no joking or fixing unless the description and mood allow it); no invented shared past,
+promises or history beyond the description, approved memories and the conversation; real questions get real, compact
+answers with the most useful part first; and a sincere question about being an AI gets a plain answer (an AI voicing this
+character, never a human) while irrelevant disclaimers are left out. None of the rules names any character's slang. The honesty rules remain: a sincere question about being an AI or about how Madhuora works
 gets a plain, honest answer, real-world abilities are never claimed, and distress overrides jokes. The original description
 stays first and authoritative; the profile stays supplementary; memories stay per character.
 
@@ -66,6 +70,36 @@ the model still produced, history turns used, and the generation settings. Never
 **Measuring.** `python -m scripts.chat_latency_bench` (live, your Ollama, invented character) replays the same messages
 through the old request shape and the new one, reports first-token / total time, word counts, boilerplate and reasoning
 flags, and the effect of 0 / 6 / 24 earlier messages. The mocked tests prove what is *sent*; they say nothing about speed.
+
+## Latency investigation (first-token time)
+
+**Baseline supplied after `b581113` (real Ollama, qwen3.5:9b; a measurement, not a diagnosis).** Median first token 12,783 ms
+before and 12,619 ms after; median total 24,138 to 18,577 ms (shorter replies); thinking text 0 in both. History sweep: 0 / 6 / 24
+earlier messages gave first tokens of 12.9 / 17.0 / 21.3 s at 1,186 / 1,261 / 1,486 prompt tokens.
+
+**What those numbers do and do not show.**
+- Measured: first-token time did not move with the change; it rose with history, but by far more than the token count did
+  (+6% and +25% tokens against +32% and +65% first token).
+- Measured: about 100 prompt tokens per second of prompt reading (1,186 tokens in about 12.9 s). That is very slow for a 9B
+  model and is typical of work spilling to the CPU.
+- Hypotheses, NOT established: (1) the benchmark alternated BEFORE and AFTER prompts message by message, so each call began
+  with a different system prompt and could not reuse Ollama's prompt cache, which would make every call a full prompt read and
+  explain why shortening the reply did not change first-token time; (2) the 0 / 6 / 24 sweep ran in ascending order, so
+  position in the run (cache state, GPU/CPU heat, other load) is confounded with history length; (3) the model may not fit
+  fully in GPU memory.
+
+**Probe.** `python -m scripts.chat_latency_probe` tests those hypotheses against the real native request: `/api/ps` GPU
+placement; history 0 / 6 / 12 / 24 with at least three repetitions and rotated order; prefill-only runs (`num_predict=1`) to
+separate reading from generating; identical-request cache hit against cache miss; uncached prompt tokens per second. It
+reports prompt tokens, first token, total, prompt-evaluation time, generation time, output tokens and load time, as medians.
+`chat_latency_bench` now runs each variant as a block so the cache is not defeated by the benchmark itself.
+
+**Decisions so far.** No history reduction and no prompt trimming have been adopted: nothing has measured that either helps.
+The description, the personality instructions and the profile are not candidates. `CHAT_CONTEXT_MESSAGES` (24) and
+`CHAT_CONTEXT_CHARS` (12000) remain the controls; if the probe shows history cost is real and not just ordering, a
+conservative step (for example 12 messages or 6000 characters, keeping the newest turns and the approved memories) should
+be measured with the probe before it becomes the default. The fixed rules are about 5.8k characters; a test caps their
+size so they cannot grow unnoticed.
 
 ## Characters and conversations: who is being addressed
 
