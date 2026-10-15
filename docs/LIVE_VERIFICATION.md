@@ -144,3 +144,38 @@ Create two throw-away development accounts, confirm both emails, then in PowerSh
 `$env:MADHUORA_TEST_A_EMAIL="..."; $env:MADHUORA_TEST_A_PASSWORD="..."; $env:MADHUORA_TEST_B_EMAIL="..."; $env:MADHUORA_TEST_B_PASSWORD="..."`
 then `python -m scripts.two_account_check` (backend running). Portrait privacy needs a real upload: the signed URL must
 work, and the bare storage path without a token must not.
+
+## 7. Conversations, streaming and learning (Phase 4) — LIVE steps, none of which has been run yet
+
+Prerequisites: `AI_PROVIDER=ollama`, `OLLAMA_CHARACTER_MODEL=qwen3.5:9b` in `backend/.env`; Ollama running; the Phase 4
+migration is already applied to the development project (`docs/MIGRATIONS.md`). Pull the branch first
+(`cd C:\Users\anvii\OneDrive\Desktop\madhuora\webapp` then `git pull`).
+
+**7a. Model-level check (no database, synthetic text only)**
+`python -m scripts.live_chat_smoke` - three streamed turns (time to first token, total time, tokens/s, number of separate
+stream pieces, Hindi/emoji intact, no hidden reasoning leaked) and one extraction on a synthetic conversation, showing
+what the model proposed and what the validator kept or dropped. It exits non-zero on a failed check; read the KEPT lines
+yourself, the script cannot judge usefulness. Output also goes to `scripts/out/live_chat_smoke.json`.
+
+**7b. Real browser, real backend (use a throw-away account and invented text)**
+1. Start backend and frontend as usual; sign in; make sure the Character interpretation exists (analysis finished).
+2. Conversations → send a short message. Expect: a spinner labelled "Waiting for the first words" only until the first
+   piece, then text growing word by word; Stop mid-reply keeps the partial text marked "Stopped"; reload keeps history.
+3. Stop the backend while a reply streams (or close Ollama): the reply must show as interrupted, never as complete, and a
+   restart must not leave anything "running".
+4. Memories → turn learning on (read the explanation). In a conversation say a few clear things about yourself and one
+   correction, then press "Review what Madhuora learned". Wait (minutes on a slow model). Expect suggestions, each with
+   your own quote; nothing under "Remembered" until you approve. Approve one, reject one, edit one.
+5. Send a related message: the reply should show "Informed by N approved memories". Forget the memory: it must stop appearing.
+6. Delete the conversation with and without "also delete the memories" and check the result matches the dialog text.
+7. Accept a profile suggestion; History must show the earlier version; the description in Twin Studio must be unchanged.
+
+**7c. Two accounts and the new tables**
+`python -m scripts.two_account_check` (see §6) now also covers conversations, messages, candidates, memories, proposals
+and revisions (reads, spoofed inserts, takeovers, deletes, anonymous access). Isolation stays **UNVERIFIED** until it
+prints ALL PASSED.
+
+**7d. What to report back**: the `live_chat_smoke` timings and KEPT/dropped lists, whether step 7b matched each
+expectation (note any that did not), and the `two_account_check` result.
+
+Status today: mocked (backend, vitest, Playwright) and real-socket-with-stub-model checks pass; every item above is unverified.

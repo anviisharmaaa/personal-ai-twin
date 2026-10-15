@@ -6,6 +6,7 @@ Credentials come from environment variables and are never printed or stored:
     $env:MADHUORA_TEST_A_EMAIL / _A_PASSWORD / _B_EMAIL / _B_PASSWORD
     python -m scripts.two_account_check [--backend http://localhost:8000]
 
+It also covers conversations, messages and the learning tables (candidates, memories, proposals, revisions).
 It proves, with real tokens and the database's real row-level security (not mocks), that account B cannot read or
 change account A's twin, character description, profile or consent, either through the Madhuora API or by talking to
 PostgREST directly with B's own token (what a malicious browser could do). It writes one description into A's twin,
@@ -91,6 +92,58 @@ def main() -> int:
     anon = {"apikey": key}
     r = httpx.get(f"{rest}/twins", headers=anon, params={"select": "*"}, timeout=20)
     check(r.status_code in (401, 403) or (r.status_code == 200 and r.json() == []), "an unauthenticated caller sees no twins")
+
+    # ---- Phase 4 tables: conversations, messages, learning ------------------------------------------------------
+    # A creates synthetic rows through PostgREST with A's own token (what the API does), then B tries to reach them.
+    ha_db = {"apikey": key, "Authorization": f"Bearer {ta}", "Prefer": "return=representation"}
+    conv = httpx.post(f"{rest}/conversations", headers=ha_db, json={"owner_id": ida, "twin_id": twin_a, "title": "Isolation chat"}, timeout=20)
+    check(conv.status_code == 201, "A can create a conversation on A's own twin")
+    cid = conv.json()[0]["id"] if conv.status_code == 201 else None
+    private_text = "Isolation-check message text that only A may read."
+    msg = httpx.post(f"{rest}/messages", headers=ha_db, json={
+        "conversation_id": cid, "owner_id": ida, "role": "user", "content": private_text, "status": "complete",
+        "client_message_id": "isolation-key-1"}, timeout=20) if cid else None
+    check(msg is not None and msg.status_code == 201, "A can store a message in A's conversation")
+    cand = httpx.post(f"{rest}/memory_candidates", headers=ha_db, json={
+        "owner_id": ida, "twin_id": twin_a, "conversation_id": cid, "statement": "Isolation candidate", "category": "fact",
+        "evidence_type": "explicit_statement", "fingerprint": "iso-fp"}, timeout=20)
+    mem = httpx.post(f"{rest}/memories", headers=ha_db, json={
+        "owner_id": ida, "twin_id": twin_a, "statement": "Isolation memory", "category": "fact",
+        "evidence_type": "explicit_statement", "fingerprint": "iso-fp-m"}, timeout=20)
+    check(cand.status_code == 201 and mem.status_code == 201, "A can store a candidate and a memory")
+    mem_id = mem.json()[0]["id"] if mem.status_code == 201 else None
+    httpx.put(f"{api}/learning/preference", headers=ha, json={"enabled": True, "disclosure_version": httpx.get(f"{api}/learning/preference", headers=ha, timeout=20).json().get("current_disclosure_version")}, timeout=20)
+
+    for table in ("conversations", "messages", "learning_preferences", "memory_candidates", "memories", "profile_proposals", "profile_revisions"):
+        rows = httpx.get(f"{rest}/{table}", headers=h, params={"select": "*"}, timeout=20).json()
+        leaked = [x for x in rows if isinstance(x, dict) and ida in (x.get("owner_id"),)]
+        check(isinstance(rows, list) and not leaked, f"B cannot read A's rows in {table} (B sees {len(rows)} own row(s))")
+    check(private_text not in httpx.get(f"{rest}/messages", headers=h, params={"select": "content"}, timeout=20).text, "A's message text is not readable by B")
+    for path in (f"/conversations/{cid}/messages", f"/conversations/{cid}/learning"):
+        check(httpx.get(f"{api}{path}", headers=hb, timeout=20).status_code == 404, f"B gets 404 for A's {path.split('/')[-1]} through the API")
+    check(httpx.delete(f"{api}/conversations/{cid}", headers=hb, timeout=20).status_code == 404, "B cannot delete A's conversation through the API")
+    check(httpx.patch(f"{api}/memories/{mem_id}", headers=hb, json={"pinned": True}, timeout=20).status_code == 404, "B cannot edit A's memory through the API")
+    # Writes straight to the database.
+    r = httpx.post(f"{rest}/messages", headers=h, json={"conversation_id": cid, "owner_id": idb, "role": "user", "content": "intrusion", "status": "complete"}, timeout=20)
+    check(r.status_code >= 400, "B cannot add a message to A's conversation")
+    r = httpx.post(f"{rest}/messages", headers=h, json={"conversation_id": cid, "owner_id": ida, "role": "user", "content": "spoof", "status": "complete"}, timeout=20)
+    check(r.status_code >= 400, "B cannot add a message claiming to be A's")
+    r = httpx.post(f"{rest}/conversations", headers=h, json={"owner_id": idb, "twin_id": twin_a, "title": "intrusion"}, timeout=20)
+    check(r.status_code >= 400, "B cannot create a conversation on A's twin")
+    r = httpx.post(f"{rest}/memories", headers=h, json={"owner_id": idb, "twin_id": twin_a, "statement": "planted", "category": "fact", "evidence_type": "explicit_statement", "fingerprint": "x"}, timeout=20)
+    check(r.status_code >= 400, "B cannot plant a memory on A's twin")
+    for table, ident in (("memories", mem_id), ("conversations", cid)):
+        r = httpx.patch(f"{rest}/{table}", headers=h, params={"id": f"eq.{ident}"}, json={"owner_id": idb}, timeout=20)
+        check(r.status_code in (204, 401, 403) or (r.status_code == 200 and r.json() == []), f"B cannot take over A's row in {table}")
+        r = httpx.delete(f"{rest}/{table}", headers=h, params={"id": f"eq.{ident}"}, timeout=20)
+        check(r.status_code in (204, 401, 403) or (r.status_code == 200 and r.json() == []), f"B cannot delete A's row in {table}")
+    check(httpx.get(f"{api}/memories", headers=ha, timeout=20).json().get("memories", [{}])[0].get("id") == mem_id, "A's memory is intact after B's attempts")
+    anon_rows = httpx.get(f"{rest}/messages", headers=anon, params={"select": "*"}, timeout=20)
+    check(anon_rows.status_code in (401, 403) or (anon_rows.status_code == 200 and anon_rows.json() == []), "an unauthenticated caller sees no messages")
+    # Clean up what this check created (A's own rows).
+    httpx.delete(f"{api}/conversations/{cid}?delete_memories=true", headers=ha, timeout=20)
+    httpx.delete(f"{rest}/memory_candidates", headers=ha_db, params={"fingerprint": "eq.iso-fp"}, timeout=20)
+    httpx.put(f"{api}/learning/preference", headers=ha, json={"enabled": False}, timeout=20)
 
     # A's data is still intact.
     a_after = httpx.get(f"{api}/me", headers=ha, timeout=20).json()

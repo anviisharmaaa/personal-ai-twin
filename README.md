@@ -23,7 +23,7 @@ npm run dev                    # http://localhost:5173
 Supabase dashboard > Authentication > URL Configuration: set Site URL `http://localhost:5173` and add redirect URL `http://localhost:5173/auth/callback`. Email confirmation and SMTP are configured there too.
 
 ## Checks
-`backend`: `ruff check . && mypy app tests && pytest -q` · `frontend`: `npm run typecheck && npm run lint && npm test && npm run build && npm run e2e`
+`backend`: `ruff check . && mypy app scripts && pytest -q` · `frontend`: `npm run typecheck && npm run lint && npm test && npm run build && npm run e2e`
 The e2e suite and `backend/tests` use **mocked** Supabase/API; they do not prove the live services work.
 
 ## Notes
@@ -64,3 +64,15 @@ failed analysis never overwrites the last good profile.
 
 Live steps (model access, smoke test, UI test, leaked-password protection, two-account RLS check): `docs/LIVE_VERIFICATION.md`.
 Migration history reconciliation: `docs/MIGRATIONS.md`.
+
+## Conversations and learning (Phase 4)
+
+Persistent conversations stream their replies from the local model (Ollama) over server-sent events, and can learn
+from what *you* say - only through notes you approve. Design, API, SSE protocol, lifecycle and limits:
+`docs/CHAT_AND_LEARNING.md`. Migration: `docs/MIGRATIONS.md`. Live steps: `docs/LIVE_VERIFICATION.md` §7.
+
+- Chat uses a separate `ChatProvider`; only Ollama (and a labelled sample) can chat. No fallback, no paid calls.
+- Learning is off by default, user-triggered, quoted from your own messages, approved before use, reversible. It is
+  saved notes retrieved when relevant - **not** fine-tuning or retraining.
+- Status: mocked backend tests, vitest, mocked Playwright, and a real-socket test with a *stub* model all pass. Real
+  Ollama streaming, real extraction quality, a real browser session and two-account RLS are **not yet verified**.
