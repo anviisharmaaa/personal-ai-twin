@@ -24,7 +24,8 @@ class ScriptedExtractor:
     configured = True
 
     def __init__(self, raw: object = None, *, fail: ChatError | None = None, hook: Any = None) -> None:
-        self.raw, self.fail, self.hook, self.calls = raw if raw is not None else [], fail, hook, []
+        self.raw, self.fail, self.hook = raw if raw is not None else [], fail, hook
+        self.calls: list[str] = []
 
     async def extract(self, conversation: str) -> object:
         self.calls.append(conversation)
@@ -80,7 +81,8 @@ def chat_with(client: TestClient, h: dict[str, str], *texts: str) -> str:
 
 
 def review(client: TestClient, h: dict[str, str], cid: str) -> httpx.Response:
-    return client.post(f"/api/v1/conversations/{cid}/learning/review", headers=h)
+    r: httpx.Response = client.post(f"/api/v1/conversations/{cid}/learning/review", headers=h)
+    return r
 
 
 def learning(client: TestClient, h: dict[str, str], cid: str) -> dict[str, Any]:
@@ -256,7 +258,7 @@ def test_extractor_sees_the_conversation_labelled_and_never_the_profile(client: 
     extractor(ex)
     review(client, h, cid)
     assert "[m1] USER: " + TEA in ex.calls[0] and "[m2] ASSISTANT: Noted." in ex.calls[0]
-    assert DESC not in ex.calls[0] and PROFILE["summary"] not in ex.calls[0]
+    assert DESC not in ex.calls[0] and str(PROFILE["summary"]) not in ex.calls[0]
 
 
 @pytest.mark.parametrize(("provider", "code"), [("mock", "learning_unavailable_in_sample_mode"), ("nvidia", "learning_provider_unsupported"), ("openai", "learning_provider_unsupported")])

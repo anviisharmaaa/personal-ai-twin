@@ -116,8 +116,9 @@ def new_conversation(client: TestClient, h: dict[str, str]) -> str:
 
 
 def send(client: TestClient, h: dict[str, str], cid: str, text: str, key: str = "key-00000001") -> httpx.Response:
-    return client.post(f"/api/v1/conversations/{cid}/messages/stream",
-                       json={"content": text, "client_message_id": key}, headers=h)
+    r: httpx.Response = client.post(f"/api/v1/conversations/{cid}/messages/stream",
+                                    json={"content": text, "client_message_id": key}, headers=h)
+    return r
 
 
 def use(provider: object) -> None:
@@ -234,7 +235,7 @@ def test_a_busy_local_model_is_reported_not_queued_silently(
     (lambda: ScriptedChat(["x"], fail=ChatError("local_unavailable", "down", 503)), "failed", "local_unavailable"),
 ])
 def test_failed_empty_or_truncated_replies_are_never_saved_as_complete(
-        client: TestClient, fake: FakeSupabase, ollama_env: None, chat, state: str, code: str) -> None:  # type: ignore[no-untyped-def]
+        client: TestClient, fake: FakeSupabase, ollama_env: None, chat: Any, state: str, code: str) -> None:
     h = ready_user(client, fake)
     cid = new_conversation(client, h)
     use(chat())
@@ -297,15 +298,15 @@ def test_chat_needs_the_current_provider_consent_and_a_profile(client: TestClien
 
 def test_chat_is_refused_on_nvidia_and_openai_and_never_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
     for p in ("nvidia", "openai"):
-        s = Settings(_env_file=None, ai_provider=p, nvidia_api_key="k", nvidia_character_model="m",  # type: ignore[call-arg]
+        s = Settings(_env_file=None, ai_provider=p, nvidia_api_key="k", nvidia_character_model="m",
                      openai_api_key="k", openai_character_model="m", ollama_character_model="would-be-fallback")
         c = build_chat_provider(s)
         assert isinstance(c, UnavailableChat) and c.code == "chat_provider_unsupported" and not c.configured
-    off = build_chat_provider(Settings(_env_file=None, ollama_character_model="m"))  # type: ignore[call-arg]
+    off = build_chat_provider(Settings(_env_file=None, ollama_character_model="m"))
     assert isinstance(off, UnavailableChat) and off.code == "ai_off"
-    local = build_chat_provider(Settings(_env_file=None, ai_provider="ollama", ollama_character_model="m"))  # type: ignore[call-arg]
+    local = build_chat_provider(Settings(_env_file=None, ai_provider="ollama", ollama_character_model="m"))
     assert isinstance(local, OllamaChatProvider) and local.configured
-    remote = build_chat_provider(Settings(_env_file=None, ai_provider="ollama", ollama_character_model="m",  # type: ignore[call-arg]
+    remote = build_chat_provider(Settings(_env_file=None, ai_provider="ollama", ollama_character_model="m",
                                           ollama_base_url="http://example.com/v1"))
     assert isinstance(remote, OllamaChatProvider) and not remote.configured    # a non-local address is refused
 
@@ -383,7 +384,7 @@ def test_history_is_bounded_and_the_trimming_is_reported() -> None:
 
 
 def test_memory_retrieval_is_relevant_bounded_and_ignores_inactive_ones() -> None:
-    mems = [
+    mems: list[dict[str, Any]] = [
         {"id": "1", "statement": "She dislikes loud crowded parties", "category": "preference", "evidence_type": "explicit_statement", "status": "active"},
         {"id": "2", "statement": "Her favourite tea is masala chai", "category": "preference", "evidence_type": "explicit_statement", "status": "active"},
         {"id": "3", "statement": "She dislikes loud parties too", "category": "preference", "evidence_type": "explicit_statement", "status": "superseded"},

@@ -49,6 +49,8 @@ for (const theme of ["light", "dark"] as const) {
         await page.getByLabel("Message").fill("Hello");
         await page.getByRole("button", { name: "Send" }).click();
         await expect(page.getByText("Hello there, friend.")).toBeVisible();
+        await expect(page.getByRole("button", { name: "Delete conversation" })).toBeEnabled(); // reply fully settled
+        await page.waitForTimeout(300);
       } else await page.getByText("Where this came from").click();
       const r = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
       const bad = r.violations.filter((v) => v.impact === "serious" || v.impact === "critical");
