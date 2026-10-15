@@ -190,6 +190,13 @@ async def _run_analysis(rest: SupabaseRest, user: AuthUser, twin: dict[str, Any]
         if latest and (latest.get("description_version") or 0) > version:
             pass
         elif latest:
+            if latest.get("profile") is not None and await rest.select(user.token, "profile_proposals", {
+                    "select": "id", "owner_id": _eq(user.id), "twin_id": _eq(twin["id"]), "status": "eq.accepted",
+                    "limit": "1"}):
+                # Re-analysis replaces the profile, including entries the user accepted from conversations. Keep the
+                # previous one in the history so nothing the user approved is lost without a trace.
+                await rest.insert(user.token, "profile_revisions", {
+                    "owner_id": user.id, "twin_id": twin["id"], "profile": latest["profile"], "reason": "regenerated"})
             await rest.update(user.token, "character_profiles",
                               {"owner_id": _eq(user.id), "twin_id": _eq(twin["id"])}, fields)
         else:

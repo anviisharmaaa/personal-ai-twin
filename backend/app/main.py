@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from app.character_routes import router as character_router
 from app.config import get_settings
 from app.conversation_routes import router as conversation_router
+from app.learning_routes import router as learning_router
 from app.providers import active_provider, ollama_endpoint_ok, provider_ready
 from app.routes import router
 from app.supabase_rest import SupabaseError
@@ -22,6 +23,7 @@ def create_app() -> FastAPI:
     app.include_router(router)
     app.include_router(character_router)
     app.include_router(conversation_router)
+    app.include_router(learning_router)
 
     @app.exception_handler(SupabaseError)
     async def supabase_error(_: Request, exc: SupabaseError) -> JSONResponse:

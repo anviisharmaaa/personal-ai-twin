@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     # Conversational learning: how many of the newest user messages one review reads.
     learning_review_messages: int = Field(default=40, ge=2, le=200)
     learning_max_candidates: int = Field(default=8, ge=1, le=20)
+    learning_reviews_per_hour: int = Field(default=10, ge=1, le=100)
+    learning_timeout_seconds: float = Field(default=600.0, ge=10.0, le=1800.0)
+    learning_max_output_tokens: int = Field(default=1536, ge=256, le=4096)
     cors_origins: str = "http://localhost:5173"
 
     @property

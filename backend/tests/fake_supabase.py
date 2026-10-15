@@ -66,10 +66,10 @@ class FakeSupabase:
                 if str(row.get(k)) != v[3:]:
                     return False
             elif v.startswith("gte."):
-                if str(row.get(k, "")) < v[4:]:
+                if row.get(k) is None or str(row.get(k)) < v[4:]:
                     return False
             elif v.startswith("lt."):
-                if str(row.get(k, "")) >= v[3:]:
+                if row.get(k) is None or str(row.get(k)) >= v[3:]:
                     return False
             elif v.startswith("neq."):
                 if str(row.get(k)) == v[4:]:
