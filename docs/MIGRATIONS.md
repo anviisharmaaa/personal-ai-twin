@@ -38,3 +38,14 @@
   candidate). A crash between two calls can leave a candidate "pending" next to an already-created memory; approving it
   again is refused as a duplicate and the user can reject it. Moving these into Postgres functions is the follow-up if
   that ever matters.
+
+## Character-bound conversations (applied 2026-10-15, version `20261015071835`)
+
+| Local file | Contents |
+|---|---|
+| `supabase/migrations/20261015071835_conversation_character_binding.sql` | `unique (id, owner_id)` on `twins`; composite FK `conversations (twin_id, owner_id) -> twins (id, owner_id)`; trigger making `twin_id`/`owner_id` immutable on `conversations` |
+
+- Why: the earlier UPDATE policy only checked `owner_id`, so a conversation could be re-pointed at any twin id, and nothing
+  tied the conversation's owner to the twin's owner. The API now also reads the character from the conversation row.
+- Additive, no data touched (a pre-check found 0 conversations whose twin and owner disagreed). Applied once through the
+  Supabase tool; the local file was renamed to the recorded version. The constraints exist; cross-user rejection under a real second account is still unverified.

@@ -71,6 +71,8 @@ Persistent conversations stream their replies from the local model (Ollama) over
 from what *you* say - only through notes you approve. Design, API, SSE protocol, lifecycle and limits:
 `docs/CHAT_AND_LEARNING.md`. Migration: `docs/MIGRATIONS.md`. Live steps: `docs/LIVE_VERIFICATION.md` §7.
 
+- Conversations are character-centred: you pick a character, every conversation is bound to it in the server and database,
+  and every reply starts from that character's original description (see "Characters and conversations" in the doc).
 - Chat uses a separate `ChatProvider`; only Ollama (and a labelled sample) can chat. No fallback, no paid calls.
 - Learning is off by default, user-triggered, quoted from your own messages, approved before use, reversible. It is
   saved notes retrieved when relevant - **not** fine-tuning or retraining.

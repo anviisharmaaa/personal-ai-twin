@@ -11,7 +11,8 @@ const CORS = { "access-control-allow-origin": "http://127.0.0.1:5173", "access-c
 
 type Msg = { id: string; role: "user" | "assistant"; content: string; status: string; reply_to: string | null; provider: string | null; model: string | null;
   first_token_ms: number | null; duration_ms: number | null; failure_code: string | null; used_memory_ids: string[]; created_at: string; client_message_id: string | null };
-type Conv = { id: string; title: string; created_at: string; last_activity_at: string; archived_at: null; learning_reviewed_at: string | null; learning_failure_code: string | null };
+type Conv = { id: string; character_id: string; title: string; created_at: string; last_activity_at: string; archived_at: null; learning_reviewed_at: string | null; learning_failure_code: string | null };
+export type Char = { id: string; name: string; portrait_url: string | null; summary: string; has_description: boolean; profile_state: string };
 type Cand = { id: string; statement: string; category: string; scope: string; evidence_type: string; supporting: { message_id: string; quote: string }[]; status: string; conversation_id: string | null; created_at: string };
 type Mem = Cand & { source_deleted: boolean; edited: boolean; pinned: boolean; superseded_by: null; updated_at: string };
 type Prop = { id: string; memory_id: string; section: string; current_text: string; proposed_text: string; kind: string; evidence: string[]; status: string; created_at: string; resolved_at: null };
@@ -20,7 +21,7 @@ export type ChatBackend = {
   reason: string | null; isSample: boolean; modelBusy: boolean; profileOutdated: boolean; profileState: string;
   /** ok: stream a reply. fail: stream a failure after some text. hang: never answer (for Stop). refuse: HTTP error. */
   mode: "ok" | "fail" | "hang" | "refuse"; reply: string; refuseCode: string;
-  convs: Conv[]; msgs: Record<string, Msg[]>; learning: boolean;
+  chars: Char[]; convs: Conv[]; msgs: Record<string, Msg[]>; learning: boolean;
   candidates: Cand[]; memories: Mem[]; proposals: Prop[]; revisions: { id: string; profile: object; reason: string; proposal_id: string | null; created_at: string }[];
   reviewing: boolean; reviewResult: Cand[]; conflictOnApprove: boolean;
   calls: { method: string; path: string; body?: unknown }[]; n: number;
@@ -28,6 +29,7 @@ export type ChatBackend = {
 
 export const newChat = (init: Partial<ChatBackend> = {}): ChatBackend => ({
   reason: null, isSample: false, modelBusy: false, profileOutdated: false, profileState: "current", mode: "ok", reply: "Hello there, friend.", refuseCode: "model_busy",
+  chars: [{ id: "ch1", name: "Meera", portrait_url: null, summary: "Warm with friends, quiet at parties, loves masala chai.", has_description: true, profile_state: "current" }],
   convs: [], msgs: {}, learning: false, candidates: [], memories: [], proposals: [], revisions: [], reviewing: false, reviewResult: [],
   conflictOnApprove: false, calls: [], n: 0, ...init,
 });
@@ -45,7 +47,7 @@ export async function mockChat(page: Page, ch: ChatBackend) {
     const req = r.request();
     const path = new URL(req.url()).pathname;
     const m = req.method();
-    const watched = /^\/api\/v1\/(chat|conversations|learning|memory|memories|profile-)/.test(path);
+    const watched = /^\/api\/v1\/(chat|characters|conversations|learning|memory|memories|profile-)/.test(path);
     if (!watched || m === "OPTIONS") return r.fallback();
     let body: Record<string, unknown> = {};
     try { body = req.postDataJSON() ?? {}; } catch { /* no body */ }
@@ -54,13 +56,23 @@ export async function mockChat(page: Page, ch: ChatBackend) {
     const err = (status: number, code: string, message: string, extra: object = {}) => json({ detail: { code, message, ...extra } }, status);
     const none = () => r.fulfill({ status: 204, headers: CORS });
 
+    if (path === "/api/v1/characters") {
+      return json({ characters: ch.chars.map((c) => {
+        const mine = ch.convs.filter((x) => x.character_id === c.id);
+        return { ...c, conversation_count: mine.length, last_activity_at: mine[0]?.last_activity_at ?? null };
+      }) });
+    }
     if (path === "/api/v1/chat/status") {
-      return json({ available: ch.reason === null, reason: ch.reason, provider: ch.isSample ? "mock" : "ollama", is_sample: ch.isSample, model_busy: ch.modelBusy,
+      const wanted = new URL(req.url()).searchParams.get("character_id");
+      if (wanted && !ch.chars.some((c) => c.id === wanted)) return err(404, "character_not_found", "That character doesn't exist.");
+      return json({ available: ch.reason === null, character_id: wanted ?? ch.chars[0]?.id ?? null, reason: ch.reason, provider: ch.isSample ? "mock" : "ollama", is_sample: ch.isSample, model_busy: ch.modelBusy,
         profile_state: ch.profileState, profile_outdated: ch.profileOutdated, limits: { max_user_chars: 4000, context_messages: 24 } });
     }
     if (path === "/api/v1/conversations" && m === "GET") return json({ conversations: ch.convs });
     if (path === "/api/v1/conversations" && m === "POST") {
-      const c: Conv = { id: `c${++ch.n}`, title: "New conversation", created_at: now(), last_activity_at: now(), archived_at: null, learning_reviewed_at: null, learning_failure_code: null };
+      const wanted = String(body.character_id ?? "");
+      if (!ch.chars.some((x) => x.id === wanted)) return err(404, "character_not_found", "That character doesn't exist.");
+      const c: Conv = { id: `c${++ch.n}`, character_id: wanted, title: "New conversation", created_at: now(), last_activity_at: now(), archived_at: null, learning_reviewed_at: null, learning_failure_code: null };
       ch.convs.unshift(c); ch.msgs[c.id] = [];
       return json(c, 201);
     }
@@ -83,6 +95,7 @@ export async function mockChat(page: Page, ch: ChatBackend) {
       const used = ch.memories.filter((x) => x.status === "active");
       const aid = `a${++ch.n}`;
       const started = sse("started", { user_message_id: user.id, assistant_message_id: aid, provider: "ollama", model: "qwen-test:9b", is_sample: ch.isSample, replayed: false,
+        character: (() => { const cc = ch.chars.find((x) => x.id === ch.convs.find((v) => v.id === cid)?.character_id); return cc ? { id: cc.id, name: cc.name } : null; })(),
         context: { earlier_messages_used: 0, total: 0, trimmed: false }, profile_outdated: false, memories_used: used.map((x) => ({ id: x.id, statement: x.statement })) });
       const asst: Msg = { id: aid, role: "assistant", content: "", status: "complete", reply_to: user.id, provider: "ollama", model: "qwen-test:9b", first_token_ms: 1200, duration_ms: 3400,
         failure_code: null, used_memory_ids: used.map((x) => x.id), created_at: now(), client_message_id: null };

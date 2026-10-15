@@ -33,7 +33,7 @@ from app.chat import (
 )
 from app.config import get_settings
 from app.providers import consent_version
-from app.routes import _active_consent, _eq, _twin
+from app.routes import _active_consent, _eq, _twin, _with_portrait_url
 from app.supabase_rest import SupabaseError, SupabaseRest, get_rest
 
 router = APIRouter(prefix="/api/v1")
@@ -55,6 +55,7 @@ def _err(code: str, message: str, http: int) -> HTTPException:
 
 class ConversationIn(BaseModel):
     title: str | None = Field(default=None, max_length=120)
+    character_id: str | None = Field(default=None, max_length=64)   # a request only: verified against the owner
 
 
 class MessageIn(BaseModel):
@@ -76,8 +77,10 @@ def _profile_state(twin: dict[str, Any] | None, row: dict[str, Any] | None) -> s
 
 
 def _public_conversation(c: dict[str, Any]) -> dict[str, Any]:
-    return {k: c.get(k) for k in ("id", "title", "created_at", "last_activity_at", "archived_at",
-                                  "learning_reviewed_at", "learning_failure_code")}
+    out = {k: c.get(k) for k in ("id", "title", "created_at", "last_activity_at", "archived_at",
+                                 "learning_reviewed_at", "learning_failure_code")}
+    out["character_id"] = c.get("twin_id")
+    return out
 
 
 def _public_message(m: dict[str, Any]) -> dict[str, Any]:
@@ -96,12 +99,54 @@ async def _conversation(rest: SupabaseRest, user: AuthUser, cid: str) -> dict[st
     return rows[0]
 
 
+_CHARACTER_GONE = ("character_not_found", "That character doesn't exist.")
+
+
+async def _owned_character(rest: SupabaseRest, user: AuthUser, character_id: str) -> dict[str, Any]:
+    """A character id from the browser is only ever a request: it must be one of the signed-in user's own."""
+    if not _UUID.match(character_id):
+        raise _err(*_CHARACTER_GONE, status.HTTP_404_NOT_FOUND)
+    rows = await rest.select(user.token, "twins", {"select": "*", "id": _eq(character_id), "owner_id": _eq(user.id)})
+    if not rows:
+        raise _err(*_CHARACTER_GONE, status.HTTP_404_NOT_FOUND)
+    return rows[0]
+
+
+async def _conversation_character(rest: SupabaseRest, user: AuthUser, conv: dict[str, Any]) -> dict[str, Any]:
+    """The character a conversation is bound to: read from the conversation row itself, never from the request."""
+    return await _owned_character(rest, user, str(conv.get("twin_id") or ""))
+
+
+@router.get("/characters")
+async def list_characters(user: AuthUser = Depends(current_user), rest: SupabaseRest = Depends(get_rest),
+                          ) -> dict[str, Any]:
+    """The user's own characters for the picker. Today an account has one; the shape is a list on purpose."""
+    twins = await rest.select(user.token, "twins", {"select": "*", "owner_id": _eq(user.id), "order": "created_at.asc"})
+    convs = await rest.select(user.token, "conversations", {
+        "select": "id,twin_id,last_activity_at", "owner_id": _eq(user.id), "archived_at": "is.null", "limit": "1000"})
+    out = []
+    for t in twins:
+        mine = [c for c in convs if c.get("twin_id") == t["id"]]
+        row = await get_profile_row(rest, user, t["id"])
+        desc = " ".join((t.get("character_description") or "").split())
+        portrait = await _with_portrait_url(rest, user, t)
+        out.append({
+            "id": t["id"], "name": t.get("name") or "", "portrait_url": portrait.get("portrait_url"),
+            "summary": desc[:200] + ("…" if len(desc) > 200 else ""),
+            "has_description": bool(desc), "profile_state": _profile_state(t, row),
+            "conversation_count": len(mine),
+            "last_activity_at": max((c.get("last_activity_at") or "" for c in mine), default=None),
+        })
+    return {"characters": out}
+
+
 @router.get("/chat/status")
-async def chat_status(user: AuthUser = Depends(current_user), rest: SupabaseRest = Depends(get_rest),
+async def chat_status(character_id: str | None = Query(default=None, max_length=64),
+                      user: AuthUser = Depends(current_user), rest: SupabaseRest = Depends(get_rest),
                       provider: ChatProvider | UnavailableChat = Depends(get_chat_provider)) -> dict[str, Any]:
     """Why chat can or cannot be used right now, so the page can explain instead of failing on send."""
     s = get_settings()
-    twin = await _twin(rest, user)
+    twin = await _owned_character(rest, user, character_id) if character_id else await _twin(rest, user)
     consent = await _active_consent(rest, user)
     row = await get_profile_row(rest, user, twin["id"]) if twin else None
     has_description = bool(twin and (twin.get("character_description") or "").strip())
@@ -117,7 +162,8 @@ async def chat_status(user: AuthUser = Depends(current_user), rest: SupabaseRest
     elif not has_description:
         reason = "no_character"      # the description is the character; a generated profile is optional
     return {
-        "available": reason is None, "reason": reason, "provider": provider.provider,
+        "available": reason is None, "reason": reason, "character_id": twin["id"] if twin else None,
+        "provider": provider.provider,
         "is_sample": provider.provider == "mock", "model_busy": model_gate.busy,
         "profile_state": _profile_state(twin, row),
         "profile_outdated": _profile_state(twin, row) == "outdated",
@@ -126,18 +172,27 @@ async def chat_status(user: AuthUser = Depends(current_user), rest: SupabaseRest
 
 
 @router.get("/conversations")
-async def list_conversations(user: AuthUser = Depends(current_user), rest: SupabaseRest = Depends(get_rest),
+async def list_conversations(character_id: str | None = Query(default=None, max_length=64),
+                             user: AuthUser = Depends(current_user), rest: SupabaseRest = Depends(get_rest),
                              ) -> dict[str, Any]:
-    rows = await rest.select(user.token, "conversations", {
-        "select": "*", "owner_id": _eq(user.id), "archived_at": "is.null", "order": "last_activity_at.desc",
-        "limit": "100"})
+    query = {"select": "*", "owner_id": _eq(user.id), "archived_at": "is.null", "order": "last_activity_at.desc",
+             "limit": "100"}
+    if character_id:
+        query["twin_id"] = _eq((await _owned_character(rest, user, character_id))["id"])
+    rows = await rest.select(user.token, "conversations", query)
     return {"conversations": [_public_conversation(r) for r in rows]}
 
 
 @router.post("/conversations", status_code=status.HTTP_201_CREATED)
 async def create_conversation(body: ConversationIn, user: AuthUser = Depends(current_user),
                               rest: SupabaseRest = Depends(get_rest)) -> dict[str, Any]:
-    twin = await _twin(rest, user)
+    if body.character_id:
+        twin: dict[str, Any] | None = await _owned_character(rest, user, body.character_id)
+    else:       # no character named: fine while the account has exactly one, ambiguous otherwise
+        owned = await rest.select(user.token, "twins", {"select": "*", "owner_id": _eq(user.id), "limit": "2"})
+        if len(owned) > 1:
+            raise _err("character_required", "Choose which character to talk to.", status.HTTP_422_UNPROCESSABLE_ENTITY)
+        twin = owned[0] if owned else None
     if twin is None:
         raise _err("no_twin", "Create your twin's identity first.", status.HTTP_409_CONFLICT)
     row = await rest.insert(user.token, "conversations", {
@@ -226,9 +281,7 @@ async def stream_message(cid: str, body: MessageIn, user: AuthUser = Depends(cur
     if len(body.content) > s.chat_max_user_chars:
         raise _err("too_long", f"Keep a message under {s.chat_max_user_chars} characters.",
                    status.HTTP_422_UNPROCESSABLE_ENTITY)
-    twin = await _twin(rest, user)
-    if twin is None:
-        raise _err("no_twin", "Create your twin's identity first.", status.HTTP_409_CONFLICT)
+    twin = await _conversation_character(rest, user, conv)     # the character is the conversation's, not the request's
 
     consent = await _active_consent(rest, user)
     if consent is None or consent.get("version") != consent_version(s):
@@ -315,6 +368,7 @@ async def stream_message(cid: str, body: MessageIn, user: AuthUser = Depends(cur
         "context": {"earlier_messages_used": ctx.used_turns, "earlier_messages_total": ctx.total_turns,
                     "trimmed": ctx.trimmed},
         "profile_state": pstate, "profile_outdated": pstate == "outdated",
+        "character": {"id": twin["id"], "name": twin.get("name") or ""},
         "memories_used": [{"id": m["id"], "statement": m["statement"]} for m in chosen],
     }
     hint = looks_like_correction(body.content)

@@ -63,7 +63,7 @@ export class SseParser {
 export type MemoryUsed = { id: string; statement: string };
 export type StartedInfo = {
   user_message_id: string; assistant_message_id: string; provider: string; model: string; is_sample: boolean;
-  replayed: boolean; profile_outdated: boolean; memories_used: MemoryUsed[];
+  replayed: boolean; profile_outdated: boolean; character?: { id: string; name: string }; memories_used: MemoryUsed[];
   context: { earlier_messages_used: number; total: number; trimmed: boolean };
 };
 export type StreamResult =

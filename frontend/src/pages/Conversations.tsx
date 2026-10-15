@@ -1,11 +1,12 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { CharacterPortrait } from "../components/CharacterPortrait";
 import { Icon } from "../components/Icon";
 import { Button, Chip, Notice, Skeleton } from "../components/ui";
 import {
-  K, useChatStatus, useConversations, useCreateConversation, useDeleteConversation, useLearningPref, useMemories,
-  useMessages, useReviewState, useStartReview, type Message,
+  K, useChatStatus, useCharacters, useConversations, useCreateConversation, useDeleteConversation, useLearningPref, useMemories,
+  useMessages, useReviewState, useStartReview, type Character, type Message,
 } from "../hooks/useChat";
 import { ApiError } from "../lib/api";
 import { StreamError, streamMessage, type StartedInfo } from "../lib/sse";
@@ -37,6 +38,7 @@ const ERRORS: Record<string, string> = {
   no_profile: "There is no interpretation of the character yet.",
   too_long: "That message is too long.",
   cancelled: "You stopped this reply.",
+  character_not_found: "That character isn’t available any more.",
 };
 const errText = (code: string, fallback?: string) => ERRORS[code] ?? fallback ?? "Something went wrong.";
 
@@ -47,7 +49,7 @@ type Pending = {
   error?: { code: string; message: string; partial: boolean };
 };
 
-function Bubble({ m, memNames, onRetry, canRetry }: { m: Message; memNames: Map<string, string>; onRetry?: () => void; canRetry: boolean }) {
+function Bubble({ m, memNames, onRetry, canRetry, who }: { m: Message; memNames: Map<string, string>; onRetry?: () => void; canRetry: boolean; who: string }) {
   const mine = m.role === "user";
   const note = m.status === "cancelled" ? "Stopped — this reply is incomplete."
     : m.status === "incomplete" ? (m.failure_code === "truncated" ? "Cut off at the length limit — this reply is incomplete." : "Interrupted — this reply is incomplete.")
@@ -56,6 +58,7 @@ function Bubble({ m, memNames, onRetry, canRetry }: { m: Message; memNames: Map<
   return (
     <li className={`flex ${mine ? "justify-end" : "justify-start"}`}>
       <div className={`max-w-[85%] rounded-[16px] px-4 py-3 text-sm ${mine ? "bg-brand text-on-brand" : "border border-border bg-surface"} ${note ? "border-dashed" : ""}`}>
+        {!mine && <p className="mb-1 text-xs font-semibold text-accent">{who}</p>}
         <p className="whitespace-pre-wrap break-words">{m.content || (note ? "(no text was produced)" : "")}</p>
         {note && (
           <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
@@ -133,15 +136,51 @@ function ReviewBar({ id }: { id: string }) {
   );
 }
 
+function CharacterPicker({ chars, onPick }: { chars: Character[]; onPick: (id: string) => void }) {
+  return (
+    <section aria-labelledby="pick-h" className="mt-6">
+      <h2 id="pick-h" className="text-xl font-semibold">Talk to a character</h2>
+      <p className="mt-1 max-w-xl text-sm text-muted">Choose who you want to talk to. Every reply follows that character’s own description, and each character keeps its own conversations and memories.</p>
+      <ul className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {chars.map((c) => (
+          <li key={c.id}>
+            <button onClick={() => onPick(c.id)} aria-label={`Talk to ${c.name}`}
+              className="flex h-full w-full flex-col gap-3 rounded-[20px] border border-border bg-surface p-5 text-left transition hover:border-accent/70 hover:bg-surface-2">
+              <span className="flex items-center gap-4">
+                <CharacterPortrait name={c.name} url={c.portrait_url} size={72} />
+                <span className="min-w-0">
+                  <span className="block truncate text-lg font-semibold">{c.name}</span>
+                  <span className="block text-xs text-muted">{c.conversation_count === 0 ? "No conversations yet" : `${c.conversation_count} ${c.conversation_count === 1 ? "conversation" : "conversations"}`}</span>
+                </span>
+              </span>
+              <span className="line-clamp-3 text-sm text-muted">{c.has_description ? c.summary : "No description yet — add one in Twin Studio before you chat."}</span>
+              <span className="mt-auto flex flex-col items-start gap-2">
+                <span className="flex items-center gap-1 text-sm font-medium text-accent">Talk to {c.name} <Icon name="chevron" size={16} /></span>
+                {c.has_description && c.profile_state !== "current" && <Chip>{c.profile_state === "missing" ? "Following the description alone" : "Interpretation out of date"}</Chip>}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function Conversations() {
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
-  const status = useChatStatus();
+  const chars = useCharacters();
   const convs = useConversations();
   const create = useCreateConversation();
   const del = useDeleteConversation();
   const mems = useMemories();
   const activeId = params.get("c");
+  // The character being addressed comes from the open conversation (it is bound to one); only before a conversation
+  // exists does it come from the picker choice in the URL. Everything below (status, list, header, composer) follows it.
+  const active = convs.data?.find((c) => c.id === activeId);
+  const characterId = active?.character_id ?? params.get("ch");
+  const character = chars.data?.find((c) => c.id === characterId) ?? null;
+  const status = useChatStatus(characterId);
   const msgs = useMessages(activeId);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState<Pending | null>(null);
@@ -157,10 +196,10 @@ export function Conversations() {
   // While a reply for a saved user message is being (re)written, the older failed/incomplete reply is replaced by it.
   const pendingUser = pending ? all.find((m) => m.client_message_id === pending.key) : undefined;
   const messages = pendingUser ? all.filter((m) => !(m.role === "assistant" && m.reply_to === pendingUser.id)) : all;
-  const active = convs.data?.find((c) => c.id === activeId);
   const busy = pending?.phase === "waiting" || pending?.phase === "streaming";
   const generating = busy || !!msgs.data?.generating;
-  const canChat = status.data?.available === true;
+  const canChat = status.data?.available === true && !!character;
+  const name = character?.name ?? "the character";
 
   // Switching conversation drops any stale local state; an in-flight request for another conversation is stopped.
   useEffect(() => () => ctrl.current?.abort(), []);
@@ -170,7 +209,14 @@ export function Conversations() {
   }, [activeId]);
   useEffect(() => { endRef.current?.scrollIntoView?.({ block: "end" }); }, [messages.length, pending?.reply, pending?.phase]);
 
-  const open = (id: string | null) => setParams(id ? { c: id } : {}, { replace: false });
+  const open = (id: string) => setParams({ c: id }, { replace: false });
+  // Choosing (or leaving) a character always drops the open conversation, any draft, and any in-flight reply, so a message
+  // typed for one character can never be delivered into another character's conversation.
+  const chooseCharacter = (id: string | null) => {
+    ctrl.current?.abort(); runConv.current = null; setPending(null); setDraft(""); setHint(false);
+    setParams(id ? { ch: id } : {}, { replace: false });
+  };
+  const newConversation = () => { if (characterId) chooseCharacter(characterId); };
 
   const run = useCallback(async (cid: string, text: string, key: string) => {
     ctrl.current?.abort();
@@ -214,9 +260,10 @@ export function Conversations() {
   const send = async () => {
     const text = draft.trim();
     if (!text || busy || !canChat) return;
+    if (!characterId || !character || (active && active.character_id !== characterId)) return;
     let cid = activeId;
     if (!cid) {
-      try { cid = (await create.mutateAsync()).id; } catch { return; }
+      try { cid = (await create.mutateAsync(characterId)).id; } catch { return; }
       setParams({ c: cid }, { replace: true });
     }
     setDraft("");
@@ -233,13 +280,14 @@ export function Conversations() {
   const max = status.data?.limits.max_user_chars ?? 4000;
   const reason = status.data && !status.data.available ? REASONS[status.data.reason ?? ""] ?? { text: "Chat isn’t available right now." } : null;
 
+  const mine = (convs.data ?? []).filter((c) => c.character_id === characterId);
   const list = (
-    <nav aria-label="Conversations" className="flex flex-col gap-1">
+    <nav aria-label={`Conversations with ${name}`} className="flex flex-col gap-1">
       <Button variant="secondary" size="sm" className="mb-2 justify-start" disabled={create.isPending}
-        onClick={() => { open(null); setDraft(""); }}><Icon name="chat" size={16} />New conversation</Button>
+        onClick={newConversation}><Icon name="chat" size={16} />New conversation with {name}</Button>
       {convs.isLoading && <Skeleton className="h-10" />}
-      {convs.data?.length === 0 && <p className="px-1 text-sm text-muted">No conversations yet. Say hello below to start one.</p>}
-      {convs.data?.map((c) => (
+      {!convs.isLoading && mine.length === 0 && <p className="px-1 text-sm text-muted">No conversations with {name} yet. Say hello below to start one.</p>}
+      {mine.map((c) => (
         <button key={c.id} onClick={() => open(c.id)} aria-current={c.id === activeId ? "page" : undefined}
           className={`truncate rounded-[10px] px-3 py-2 text-left text-sm ${c.id === activeId ? "bg-surface-2 font-medium" : "text-muted hover:bg-surface-2 hover:text-fg"}`}>{c.title}</button>
       ))}
@@ -255,34 +303,55 @@ export function Conversations() {
       {reason && (
         <div className="mt-4"><Notice>{reason.text} {reason.to && <Link to={reason.to} className="font-medium underline underline-offset-4">{reason.label}</Link>}</Notice></div>
       )}
-      {status.data?.available && status.data.profile_outdated && (
-        <div className="mt-4"><Notice>Your description changed after the last interpretation, so replies use your new description, with the older interpretation as secondary guidance only. <Link to="/app/studio" className="font-medium underline underline-offset-4">Update it in Twin Studio</Link>.</Notice></div>
+      {character && status.data?.available && status.data.profile_outdated && (
+        <div className="mt-4"><Notice>{name}’s description changed after the last interpretation, so replies use the new description, with the older interpretation as secondary guidance only. <Link to="/app/studio" className="font-medium underline underline-offset-4">Update it in Twin Studio</Link>.</Notice></div>
       )}
-      {status.data?.available && status.data.profile_state === "missing" && (
-        <div className="mt-4"><Notice>There is no structured interpretation of your character yet, so replies follow your description alone. <Link to="/app/studio" className="font-medium underline underline-offset-4">Understand the character in Twin Studio</Link> for extra guidance.</Notice></div>
+      {character && status.data?.available && status.data.profile_state === "missing" && (
+        <div className="mt-4"><Notice>There is no structured interpretation of {name} yet, so replies follow {name}’s description alone. <Link to="/app/studio" className="font-medium underline underline-offset-4">Understand the character in Twin Studio</Link> for extra guidance.</Notice></div>
       )}
       {status.data?.available && status.data.model_busy && !busy && (
         <div className="mt-4"><Notice>The local model is busy with another job (for example understanding the character). A new reply will wait for it to finish — try again in a moment.</Notice></div>
       )}
 
-      <div className="mt-6 grid gap-6 md:grid-cols-[220px_1fr]">
+      {!characterId && (
+        chars.isLoading ? <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><Skeleton className="h-40" /><Skeleton className="h-40" /></div>
+        : chars.isError ? <div className="mt-6"><Notice tone="error">Couldn’t load your characters. Please try again.</Notice></div>
+        : (chars.data ?? []).length === 0 ? (
+          <div className="mt-6"><Notice>You haven’t created a character yet. <Link to="/app/onboarding" className="font-medium underline underline-offset-4">Create your character</Link> and describe them, then come back to talk.</Notice></div>
+        ) : <CharacterPicker chars={chars.data ?? []} onPick={chooseCharacter} />
+      )}
+
+      {characterId && !character && !chars.isLoading && (
+        <div className="mt-6"><Notice tone="error">That character isn’t available. <button onClick={() => chooseCharacter(null)} className="font-medium underline underline-offset-4">Choose a character</button></Notice></div>
+      )}
+      {characterId && (character || chars.isLoading) && (<>
+      <header className="mt-6 flex flex-wrap items-center gap-4 rounded-[20px] border border-border bg-surface p-4" aria-label="Character you are talking to">
+        <CharacterPortrait name={name} url={character?.portrait_url ?? null} size={64} />
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted">You are talking to</p>
+          <p className="truncate text-2xl font-semibold" data-testid="active-character">{character ? character.name : <Skeleton className="h-7 w-40" />}</p>
+        </div>
+        <Button variant="secondary" size="sm" onClick={() => chooseCharacter(null)}>Change character</Button>
+      </header>
+
+      <div className="mt-6 grid gap-6 md:grid-cols-[240px_1fr]">
         <div className={`${activeId ? "hidden md:block" : ""}`}>{list}</div>
-        <section className="min-w-0" aria-label="Conversation">
+        <section className="min-w-0" aria-label={`Conversation with ${name}`}>
           {activeId && (
             <div className="mb-3 flex items-center justify-between gap-2">
-              <button className="md:hidden text-sm font-medium text-accent" onClick={() => open(null)}>← All conversations</button>
+              <button className="md:hidden text-sm font-medium text-accent" onClick={newConversation}>← Conversations with {name}</button>
               <h2 className="hidden min-w-0 truncate text-lg font-semibold md:block">{active?.title ?? "Conversation"}</h2>
               <Button variant="ghost" size="sm" onClick={() => setConfirmDel(true)} disabled={generating} aria-label="Delete conversation"><Icon name="trash" size={16} /><span className="hidden sm:inline">Delete</span></Button>
             </div>
           )}
 
           <div className="min-h-[40vh] rounded-[16px] border border-border bg-surface p-4">
-            {!activeId && !pending && <p className="py-12 text-center text-sm text-muted">Start a conversation. Replies appear word by word as the model writes them.</p>}
+            {!activeId && !pending && <p className="py-12 text-center text-sm text-muted">Start a conversation with {name}. Replies appear word by word as the model writes them.</p>}
             {msgs.isLoading && activeId && <Skeleton className="h-24" />}
             {msgs.isError && <Notice tone="error">Couldn’t load this conversation. {msgs.error instanceof ApiError && msgs.error.status === 404 ? "It may have been deleted." : ""}</Notice>}
             <ol className="flex flex-col gap-3" aria-label="Chat history">
               {messages.map((m) => (
-                <Bubble key={m.id} m={m} memNames={memNames} canRetry={m.id === lastAssistant?.id && m.status !== "complete" && m.status !== "streaming" && !busy && canChat}
+                <Bubble key={m.id} m={m} memNames={memNames} who={name} canRetry={m.id === lastAssistant?.id && m.status !== "complete" && m.status !== "streaming" && !busy && canChat}
                   onRetry={() => retryMessage(m)} />
               ))}
               {pending && !pendingUser && (
@@ -291,6 +360,7 @@ export function Conversations() {
               {pending && (
                 <li className="flex justify-start" data-testid="live-reply">
                   <div className={`max-w-[85%] rounded-[16px] border px-4 py-3 text-sm ${pending.phase === "failed" ? "border-dashed border-danger/60" : "border-border"} bg-surface`}>
+                    <p className="mb-1 text-xs font-semibold text-accent">{name}</p>
                     {pending.phase === "waiting" && (
                       <p className="flex items-center gap-2 text-muted"><span className="size-3 motion-safe:animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden />
                         {pending.started?.replayed ? "Fetching the saved reply…" : "Waiting for the first words — a local model can take a minute."}</p>
@@ -323,7 +393,7 @@ export function Conversations() {
           <form className="mt-3" onSubmit={(e) => { e.preventDefault(); void send(); }}>
             <label htmlFor="composer" className="sr-only">Message</label>
             <textarea id="composer" value={draft} onChange={(e) => setDraft(e.target.value)} rows={3} maxLength={max} disabled={!canChat}
-              placeholder={canChat ? "Write a message…" : "Chat isn’t available yet"} aria-describedby="composer-help"
+              placeholder={canChat ? `Write a message to ${name}…` : "Chat isn’t available yet"} aria-describedby="composer-help"
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }}
               className="w-full rounded-[12px] border border-border bg-surface-2 px-3 py-2 text-sm placeholder:text-muted/70 focus:border-ring disabled:opacity-60" />
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
@@ -335,9 +405,10 @@ export function Conversations() {
           {activeId && <div className="mt-6 border-t border-border pt-4"><ReviewBar id={activeId} /></div>}
         </section>
       </div>
+      </>)}
       {confirmDel && active && (
         <DeleteDialog title={active.title} busy={del.isPending} onCancel={() => setConfirmDel(false)}
-          onConfirm={(withMemories) => del.mutate({ id: active.id, deleteMemories: withMemories }, { onSuccess: () => { setConfirmDel(false); open(null); } })} />
+          onConfirm={(withMemories) => del.mutate({ id: active.id, deleteMemories: withMemories }, { onSuccess: () => { setConfirmDel(false); newConversation(); } })} />
       )}
     </div>
   );

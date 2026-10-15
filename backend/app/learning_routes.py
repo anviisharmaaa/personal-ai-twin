@@ -20,7 +20,7 @@ from app.character import CharacterProfile
 from app.character_store import get_profile_row
 from app.chat import ChatError, model_gate
 from app.config import get_settings
-from app.conversation_routes import _UUID, _conversation, _err, _streaming
+from app.conversation_routes import _UUID, _conversation, _conversation_character, _err, _streaming
 from app.grounding import ITEM_FIELDS
 from app.learning import (
     PROPOSAL_EVIDENCE,
@@ -34,7 +34,7 @@ from app.learning import (
     validate_candidates,
 )
 from app.providers import active_provider, consent_version, ollama_endpoint_ok
-from app.routes import _active_consent, _eq, _twin
+from app.routes import _active_consent, _eq
 from app.supabase_rest import SupabaseError, SupabaseRest, get_rest
 
 router = APIRouter(prefix="/api/v1")
@@ -79,13 +79,6 @@ MEM_KEYS = ("id", "statement", "category", "scope", "evidence_type", "supporting
             "pinned", "status", "superseded_by", "conversation_id", "created_at", "updated_at")
 PROP_KEYS = ("id", "memory_id", "section", "current_text", "proposed_text", "kind", "evidence", "status",
              "created_at", "resolved_at")
-
-
-async def _own_twin(rest: SupabaseRest, user: AuthUser) -> dict[str, Any]:
-    twin = await _twin(rest, user)
-    if twin is None:
-        raise _err("no_twin", "Create your twin's identity first.", status.HTTP_409_CONFLICT)
-    return twin
 
 
 async def _one(rest: SupabaseRest, user: AuthUser, table: str, rid: str) -> dict[str, Any]:
@@ -161,7 +154,7 @@ async def start_review(cid: str, background: BackgroundTasks, user: AuthUser = D
                        extractor: Extractor | UnavailableExtractor = Depends(get_extractor)) -> JSONResponse:
     s = get_settings()
     conv = await _conversation(rest, user, cid)
-    twin = await _own_twin(rest, user)
+    twin = await _conversation_character(rest, user, conv)      # candidates belong to THIS conversation's character
     await _learning_ready(rest, user)
     if not s.ai_enabled:
         raise _err("ai_disabled", "AI is temporarily switched off.", status.HTTP_503_SERVICE_UNAVAILABLE)

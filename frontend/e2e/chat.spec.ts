@@ -3,12 +3,115 @@ import { mockApp, withCharacter } from "./mock";
 import { mockChat, newChat, sampleCandidate } from "./mock-chat";
 
 // MOCKED API (see mock-chat.ts). These prove UI behaviour only, not real streaming, a real model or real RLS.
-const open = async (page: import("@playwright/test").Page, ch = newChat(), theme: "light" | "dark" = "dark") => {
+// By default the character is already chosen (?ch=), as it is after clicking "Talk to Meera"; pass a url to start elsewhere.
+const open = async (page: import("@playwright/test").Page, ch = newChat(), theme: "light" | "dark" = "dark", url = "/app/conversations?ch=ch1") => {
   await mockApp(page, withCharacter(true), { theme });
   await mockChat(page, ch);
-  await page.goto("/app/conversations");
+  await page.goto(url);
   return ch;
 };
+const ARJUN = { id: "ch2", name: "Arjun", portrait_url: null, summary: "A gruff retired sailor who speaks in short sentences.", has_description: true, profile_state: "missing" };
+const streamCalls = (ch: ReturnType<typeof newChat>) => ch.calls.filter((c) => c.method === "POST" && c.path.endsWith("/messages/stream"));
+
+
+test.describe("character-centred conversations", () => {
+  test("picker offers the character; choosing it shows who you are talking to", async ({ page }) => {
+    await open(page, newChat(), "dark", "/app/conversations");
+    await expect(page.getByRole("heading", { name: "Talk to a character" })).toBeVisible();
+    await expect(page.getByText("Warm with friends, quiet at parties")).toBeVisible();
+    await expect(page.getByLabel("Message")).toHaveCount(0);                 // no composer until a character is chosen
+    await page.getByRole("button", { name: "Talk to Meera" }).click();
+    await expect(page.getByTestId("active-character")).toHaveText("Meera");
+    await expect(page.getByText("You are talking to")).toBeVisible();
+    await expect(page.getByLabel("Message")).toHaveAttribute("placeholder", "Write a message to Meera…");
+    await expect(page.getByRole("link", { name: /^[a-z0-9-]{20,}$/ })).toHaveCount(0);   // no internal ids shown
+  });
+
+  test("a user with no character is sent to create one", async ({ page }) => {
+    await open(page, newChat({ chars: [] }), "dark", "/app/conversations");
+    await expect(page.getByText("You haven’t created a character yet.")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Create your character" })).toBeVisible();
+  });
+
+  test("a made-up or foreign character id is refused, not shown as a chat", async ({ page }) => {
+    const ch = await open(page, newChat(), "dark", "/app/conversations?ch=someone-elses-id");
+    await expect(page.getByText("That character isn’t available.")).toBeVisible();
+    await expect(page.getByLabel("Message")).toHaveCount(0);
+    expect(streamCalls(ch)).toHaveLength(0);
+    await page.getByRole("button", { name: "Choose a character" }).click();
+    await expect(page.getByRole("heading", { name: "Talk to a character" })).toBeVisible();
+  });
+
+  test("conversations belong to their character; a second chat with the same character keeps the first", async ({ page }) => {
+    const ch = await open(page, newChat({ chars: [newChat().chars[0], ARJUN] }), "dark", "/app/conversations");
+    await page.getByRole("button", { name: "Talk to Meera" }).click();
+    await page.getByLabel("Message").fill("Hello Meera, first chat");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.getByText("Hello there, friend.").first()).toBeVisible();
+    expect(ch.calls.find((c) => c.method === "POST" && c.path === "/api/v1/conversations")?.body).toEqual({ character_id: "ch1" });
+    await expect(page.getByTestId("active-character")).toHaveText("Meera");
+
+    await page.getByRole("button", { name: "New conversation with Meera" }).click();     // a separate conversation
+    await expect(page.getByText("Hello Meera, first chat")).toHaveCount(1);             // only in the list, not on the page
+    await page.getByLabel("Message").fill("Second chat");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.getByText("Hello there, friend.").first()).toBeVisible();
+    const list = page.getByRole("navigation", { name: "Conversations with Meera" });
+    await expect(list.getByRole("button", { name: /Hello Meera, first chat/ })).toBeVisible();
+    await expect(list.getByRole("button", { name: /Second chat/ })).toBeVisible();
+    await list.getByRole("button", { name: /Hello Meera, first chat/ }).click();         // back to the first, history intact
+    await expect(page.getByRole("list", { name: "Chat history" }).getByText("Hello Meera, first chat")).toBeVisible();
+    await expect(page.getByRole("list", { name: "Chat history" }).getByText("Second chat")).toHaveCount(0);
+  });
+
+  test("switching characters never sends to the previous character's conversation", async ({ page }) => {
+    const ch = await open(page, newChat({ chars: [newChat().chars[0], ARJUN] }), "dark", "/app/conversations?ch=ch1");
+    await page.getByLabel("Message").fill("For Meera only");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.getByText("Hello there, friend.").first()).toBeVisible();
+    const meeraConv = ch.convs[0].id;
+
+    await page.getByRole("button", { name: "Change character" }).click();
+    await page.getByRole("button", { name: "Talk to Arjun" }).click();
+    await expect(page.getByTestId("active-character")).toHaveText("Arjun");
+    await expect(page.getByRole("list", { name: "Chat history" }).getByText("For Meera only")).toHaveCount(0);
+    await expect(page.getByRole("navigation", { name: "Conversations with Arjun" }).getByRole("button", { name: /For Meera only/ })).toHaveCount(0);
+    await page.getByLabel("Message").fill("For Arjun");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.getByText("Hello there, friend.").first()).toBeVisible();
+
+    const created = ch.calls.filter((c) => c.method === "POST" && c.path === "/api/v1/conversations").map((c) => (c.body as { character_id: string }).character_id);
+    expect(created).toEqual(["ch1", "ch2"]);
+    const streams = streamCalls(ch);
+    expect(streams).toHaveLength(2);
+    expect(streams[1].path).not.toContain(meeraConv);                                    // Arjun's message went to Arjun's conversation
+    expect(ch.convs.find((c) => c.id === meeraConv)?.character_id).toBe("ch1");
+    expect(ch.msgs[meeraConv].map((m) => m.content)).not.toContain("For Arjun");
+  });
+
+  test("changing character while a reply is being written stops it and drops the draft", async ({ page }) => {
+    const ch = await open(page, newChat({ chars: [newChat().chars[0], ARJUN], mode: "hang" }), "dark", "/app/conversations?ch=ch1");
+    await page.getByLabel("Message").fill("Slow question for Meera");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.getByRole("button", { name: "Stop" })).toBeVisible();
+    await page.getByRole("button", { name: "Change character" }).click();
+    await page.getByRole("button", { name: "Talk to Arjun" }).click();
+    await expect(page.getByTestId("live-reply")).toHaveCount(0);
+    await expect(page.getByLabel("Message")).toHaveValue("");
+    await expect(page.getByRole("button", { name: "Stop" })).toHaveCount(0);
+    expect(streamCalls(ch)).toHaveLength(1);                                             // nothing was re-sent to Arjun
+  });
+
+  test("opening a past conversation shows its own character", async ({ page }) => {
+    const ch = newChat({ chars: [newChat().chars[0], ARJUN] });
+    ch.convs.push({ id: "cA", character_id: "ch2", title: "Sea stories", created_at: "x", last_activity_at: "x", archived_at: null, learning_reviewed_at: null, learning_failure_code: null });
+    ch.msgs.cA = [{ id: "mA", role: "user", content: "Tell me about the sea", status: "complete", reply_to: null, provider: null, model: null, first_token_ms: null, duration_ms: null, failure_code: null, used_memory_ids: [], created_at: "x", client_message_id: "k1" }];
+    await open(page, ch, "dark", "/app/conversations?c=cA");
+    await expect(page.getByTestId("active-character")).toHaveText("Arjun");
+    await expect(page.getByLabel("Message")).toHaveAttribute("placeholder", "Write a message to Arjun…");
+    await expect(page.getByText("Tell me about the sea")).toBeVisible();
+  });
+});
 
 test.describe("conversations", () => {
   test("explains why chat is unavailable and blocks sending", async ({ page }) => {
@@ -20,7 +123,7 @@ test.describe("conversations", () => {
 
   test("chat works without a profile and says replies follow the description", async ({ page }) => {
     const ch = await open(page, newChat({ profileState: "missing" }));
-    await expect(page.getByText("replies follow your description alone")).toBeVisible();
+    await expect(page.getByText("replies follow Meera’s description alone")).toBeVisible();
     await expect(page.getByLabel("Message")).toBeEnabled();
     await page.getByLabel("Message").fill("Hi Meera");
     await page.getByRole("button", { name: "Send" }).click();
@@ -225,9 +328,11 @@ for (const theme of ["light", "dark"] as const) {
       ch.candidates.push(sampleCandidate());
       await mockApp(page, withCharacter(true), { theme });
       await mockChat(page, ch);
-      for (const path of ["/app/conversations", "/app/memories"]) {
+      for (const path of ["/app/conversations", "/app/conversations?ch=ch1", "/app/memories"]) {
         await page.goto(path);
         if (path.endsWith("conversations")) {
+          await expect(page.getByRole("button", { name: "Talk to Meera" })).toBeVisible();
+        } else if (path.includes("ch=ch1")) {
           await page.getByLabel("Message").fill("A very long unbroken message ".repeat(8));
           await page.getByRole("button", { name: "Send" }).click();
           await expect(page.getByText(/A long reply/).first()).toBeVisible();

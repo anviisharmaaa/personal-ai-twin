@@ -30,6 +30,22 @@ Context window: Ollama silently truncates prompts longer than its context length
 
 Tested (mocked HTTP, `tests/test_character_fidelity.py`): the real request body contains the full description first on every reply; profile/missing/outdated states; description edits; per-user isolation; approved vs pending memories; history order; the truncation guard. Not verifiable without a real model: how faithfully a given Ollama model follows the description - run `scripts/live_chat_smoke.py` against your local Ollama.
 
+## Characters and conversations: who is being addressed
+
+**Schema (audited, reused, not duplicated).** A character is a row of `twins` (name, portrait, original description, version); its structured profile is `character_profiles`; its memories, candidates, proposals and revisions each carry `twin_id`. An account currently has exactly one (`twins_one_per_owner`, `kind = 'self'`). Conversations already referenced `twins`; no second character system exists and multi-character *creation* is deliberately not built. The API and UI are shaped as lists so adding it later does not change the conversation binding.
+
+**Binding is enforced server-side and in the database.**
+- `POST /conversations {character_id}`: the id is only a request. `_owned_character` checks it is one of the signed-in user's own twins (404 `character_not_found` for unknown, malformed or someone else's). With one character the id may be omitted; with several, omitting it is 422 `character_required`.
+- Every message and learning review reads the character from the **conversation row** (`conversations.twin_id`, verified to belong to the user), never from the request body or "the account's twin". A `character_id` smuggled into a stream request is ignored; a conversation whose `twin_id` points at someone else's character is refused (404) before the model is called.
+- Memories, profile, description and history are all loaded by that `twin_id` / `conversation_id`, so two characters of one user cannot leak into each other's prompts.
+- Database (migration `20261015071835`): `unique (id, owner_id)` on `twins`, composite FK `conversations (twin_id, owner_id) -> twins (id, owner_id)`, and a trigger that makes a conversation's `twin_id`/`owner_id` immutable. This closes a gap in the earlier UPDATE policy, which only checked `owner_id`.
+
+**API additions.** `GET /characters` (own characters: id, name, signed portrait URL, short summary, `has_description`, `profile_state`, `conversation_count`); `GET /conversations?character_id=`; `GET /chat/status?character_id=` (profile state is per character); `started` SSE event carries `character {id, name}`; conversation objects carry `character_id`.
+
+**UI.** `/app/conversations` opens on "Talk to a character" (cards with portrait or monogram, name, summary, conversation count, profile notice). Choosing one shows "You are talking to <name>" with the portrait, that character's conversations only, "New conversation with <name>", and a composer addressed to them (`Write a message to <name>...`); replies are labelled with the name. "Change character" (and choosing another) aborts any in-flight reply, clears the draft and the open conversation, so nothing typed for one character can reach another's conversation. Opening a past conversation (`?c=`) shows its own character. No database ids are shown. An unknown `?ch=` shows "That character isn't available". Internal ids appear only in URLs and API calls.
+
+Tests: `tests/test_character_conversations.py` (11, includes a mutation check that fails if the stream falls back to the account's default twin), Playwright "character-centred conversations" (7) plus a11y for the picker. Two real accounts under real RLS remain unverified (`scripts/two_account_check.py`).
+
 ## Providers
 
 `CharacterAnalyzer` (structured analysis) is unchanged. Chat has its own `ChatProvider` (`app/chat.py`):

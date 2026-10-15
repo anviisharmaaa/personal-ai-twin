@@ -46,6 +46,10 @@ for (const theme of ["light", "dark"] as const) {
       await mockChat(page, ch);
       await page.goto(path);
       if (path.endsWith("conversations")) {
+        await expect(page.getByRole("button", { name: "Talk to Meera" })).toBeVisible();      // the character picker itself
+        const pick = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+        expect(pick.violations.filter((v) => v.impact === "serious" || v.impact === "critical").map((v) => v.id)).toEqual([]);
+        await page.getByRole("button", { name: "Talk to Meera" }).click();
         await page.getByLabel("Message").fill("Hello");
         await page.getByRole("button", { name: "Send" }).click();
         await expect(page.getByText("Hello there, friend.")).toBeVisible();

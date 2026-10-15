@@ -1,8 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 
+export type Character = {
+  id: string; name: string; portrait_url: string | null; summary: string; has_description: boolean;
+  profile_state: "missing" | "current" | "outdated"; conversation_count: number; last_activity_at: string | null;
+};
 export type Conversation = {
-  id: string; title: string; created_at: string; last_activity_at: string; archived_at: string | null;
+  id: string; character_id: string; title: string; created_at: string; last_activity_at: string; archived_at: string | null;
   learning_reviewed_at: string | null; learning_failure_code: string | null;
 };
 export type MessageStatus = "complete" | "streaming" | "incomplete" | "cancelled" | "failed";
@@ -12,7 +16,7 @@ export type Message = {
   failure_code: string | null; used_memory_ids: string[] | null; created_at: string; client_message_id: string | null;
 };
 export type ChatStatus = {
-  available: boolean; reason: string | null; provider: string; is_sample: boolean; model_busy: boolean;
+  available: boolean; reason: string | null; character_id?: string | null; provider: string; is_sample: boolean; model_busy: boolean;
   profile_state?: "missing" | "current" | "outdated"; profile_outdated: boolean; limits: { max_user_chars: number; context_messages: number };
 };
 export type Evidence = { message_id: string; quote: string };
@@ -40,12 +44,17 @@ export type ReviewState = {
 
 const P = "/api/v1";
 export const K = {
-  status: ["chat-status"], convs: ["conversations"], msgs: (id: string) => ["messages", id],
+  status: ["chat-status"], convs: ["conversations"], chars: ["characters"], msgs: (id: string) => ["messages", id],
   pref: ["learning-pref"], cands: ["candidates"], mems: ["memories"], props: ["proposals"], revs: ["revisions"],
   review: (id: string) => ["review", id],
 };
 
-export const useChatStatus = () => useQuery({ queryKey: K.status, queryFn: () => api.get<ChatStatus>(`${P}/chat/status`), retry: 1 });
+export const useCharacters = () =>
+  useQuery({ queryKey: K.chars, queryFn: async () => (await api.get<{ characters: Character[] }>(`${P}/characters`)).characters });
+/** Status for ONE character: its profile state is per character. */
+export const useChatStatus = (characterId: string | null) =>
+  useQuery({ queryKey: [...K.status, characterId ?? ""], retry: 1,
+    queryFn: () => api.get<ChatStatus>(`${P}/chat/status${characterId ? `?character_id=${encodeURIComponent(characterId)}` : ""}`) });
 export const useConversations = () =>
   useQuery({ queryKey: K.convs, queryFn: async () => (await api.get<{ conversations: Conversation[] }>(`${P}/conversations`)).conversations });
 export function useMessages(id: string | null) {
@@ -58,7 +67,11 @@ export function useMessages(id: string | null) {
 }
 export function useCreateConversation() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: () => api.post<Conversation>(`${P}/conversations`, {}), onSuccess: () => qc.invalidateQueries({ queryKey: K.convs }) });
+  return useMutation({
+    // The character is named explicitly; the server still verifies it is one of this user's own.
+    mutationFn: (characterId: string) => api.post<Conversation>(`${P}/conversations`, { character_id: characterId }),
+    onSuccess: () => { for (const k of [K.convs, K.chars]) qc.invalidateQueries({ queryKey: k }); },
+  });
 }
 export function useRenameConversation() {
   const qc = useQueryClient();
@@ -68,7 +81,7 @@ export function useDeleteConversation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (v: { id: string; deleteMemories: boolean }) => api.del(`${P}/conversations/${v.id}?delete_memories=${v.deleteMemories}`),
-    onSuccess: () => { for (const k of [K.convs, K.mems, K.cands]) qc.invalidateQueries({ queryKey: k }); },
+    onSuccess: () => { for (const k of [K.convs, K.chars, K.mems, K.cands]) qc.invalidateQueries({ queryKey: k }); },
   });
 }
 
