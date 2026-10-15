@@ -70,7 +70,9 @@ def _now() -> str:
 
 
 def _public(row: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
-    return {k: row.get(k) for k in keys}
+    out = {k: row.get(k) for k in keys}
+    out["character_id"] = row.get("twin_id")        # which character this belongs to (never mixed across characters)
+    return out
 
 
 CAND_KEYS = ("id", "statement", "category", "scope", "evidence_type", "supporting", "status", "conversation_id",

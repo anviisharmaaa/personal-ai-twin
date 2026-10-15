@@ -49,3 +49,19 @@
   tied the conversation's owner to the twin's owner. The API now also reads the character from the conversation row.
 - Additive, no data touched (a pre-check found 0 conversations whose twin and owner disagreed). Applied once through the
   Supabase tool; the local file was renamed to the recorded version. The constraints exist; cross-user rejection under a real second account is still unverified.
+
+## Multiple characters per account (file `20261015200000_multiple_characters.sql`, NOT yet applied to dev)
+
+| Local file | Contents |
+|---|---|
+| `supabase/migrations/20261015200000_multiple_characters.sql` | `twins.kind` check widened to `('self','character')`; partial unique index `twins_one_self_per_owner` (one self-twin per owner); drops `twins_one_per_owner`; index `twins_owner_created_idx`; `twins_guard()` trigger (kind/owner immutable, max 25 per owner) |
+
+- Audit first: `twins_kind_check CHECK (kind = 'self')` and unique `twins_one_per_owner (owner_id)` were the two database
+  blocks on more than one character; RLS (owner-only) and the conversations composite FK already suit several characters.
+- Additive for data: no rows change; every existing twin stays `kind = 'self'`. Revert instructions are in the file's
+  comments (only possible while no owner has a second twin).
+- **Not applied by Claude.** The Supabase tool used in the development session cancelled any statement containing
+  `DROP` (the migration drops two constraints), so the migration must be applied by you: paste the file into the
+  Supabase SQL editor of the development project (or `supabase db push`). Until then, `POST /characters` answers
+  503 `migration_required` with a clear message and the self-twin keeps working. After applying, record the version
+  Supabase assigns here, and run `python -m scripts.live_multi_character_check` (LIVE_VERIFICATION.md §8).

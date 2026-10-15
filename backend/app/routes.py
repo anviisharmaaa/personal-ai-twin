@@ -1,18 +1,21 @@
 import asyncio
+import logging
+import re
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 
 from app.auth import AuthUser, current_user
 from app.character_store import character_view, get_profile_row
 from app.config import get_settings
 from app.providers import consent_version, provider_info
-from app.schemas import ConsentIn, OnboardingStep, ProfileIn, TwinIn
+from app.schemas import CharacterCreateIn, ConsentIn, OnboardingStep, ProfileIn, TwinIn
 from app.supabase_rest import SupabaseError, SupabaseRest, get_rest
 
 router = APIRouter(prefix="/api/v1")
+log = logging.getLogger("madhuora.api")
 
 # Consent text and version are provider-specific (see app.providers.consent_version).
 BUCKET = "portraits"
@@ -38,9 +41,35 @@ def _sniff(data: bytes) -> tuple[str, str] | None:
     return None
 
 
+MAX_CHARACTERS = 25          # per account; the database enforces the same cap (twins_guard trigger)
+_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")     # no PostgREST metacharacters ever reach a query
+
+
+def character_error(code: str, message: str, http: int) -> HTTPException:
+    return HTTPException(http, {"code": code, "message": message})
+
+
 async def _twin(rest: SupabaseRest, user: AuthUser) -> dict[str, Any] | None:
-    rows = await rest.select(user.token, "twins", {"select": "*", "owner_id": _eq(user.id)})
+    """The user's personal self-twin (at most one). Other characters are reached only by an explicit, verified id."""
+    rows = await rest.select(user.token, "twins", {"select": "*", "owner_id": _eq(user.id), "kind": "eq.self",
+                                                   "limit": "1"})
     return rows[0] if rows else None
+
+
+async def owned_character(rest: SupabaseRest, user: AuthUser, character_id: str) -> dict[str, Any]:
+    """A character id from the browser is only a request: it must be one of the signed-in user's own (404 otherwise;
+    the same answer for 'does not exist' and 'belongs to someone else', so ids cannot be probed)."""
+    if not _ID.match(character_id):
+        raise character_error("character_not_found", "That character doesn't exist.", status.HTTP_404_NOT_FOUND)
+    rows = await rest.select(user.token, "twins", {"select": "*", "id": _eq(character_id), "owner_id": _eq(user.id)})
+    if not rows:
+        raise character_error("character_not_found", "That character doesn't exist.", status.HTTP_404_NOT_FOUND)
+    return rows[0]
+
+
+async def target_twin(rest: SupabaseRest, user: AuthUser, character_id: str | None) -> dict[str, Any] | None:
+    """The character an endpoint acts on: the named one (verified), or the self-twin when none is named."""
+    return await owned_character(rest, user, character_id) if character_id else await _twin(rest, user)
 
 
 async def _with_portrait_url(rest: SupabaseRest, user: AuthUser, twin: dict[str, Any]) -> dict[str, Any]:
@@ -139,10 +168,13 @@ async def withdraw_ai_consent(
 
 @router.put("/twin")
 async def upsert_twin(
-    body: TwinIn, user: AuthUser = Depends(current_user), rest: SupabaseRest = Depends(get_rest)
+    body: TwinIn, character_id: str | None = Query(default=None, max_length=64),
+    user: AuthUser = Depends(current_user), rest: SupabaseRest = Depends(get_rest),
 ) -> dict[str, Any]:
-    existing = await _twin(rest, user)
+    existing = await target_twin(rest, user, character_id)
     patch = body.model_dump(exclude_none=True)
+    if existing is None and character_id:
+        raise character_error("character_not_found", "That character doesn't exist.", status.HTTP_404_NOT_FOUND)
     if existing is None:
         if not body.name:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "A name is required.")
@@ -170,10 +202,11 @@ async def upload_portrait(
     file: UploadFile = File(...),
     depicts_someone_else: bool = Form(False),
     permission_confirmed: bool = Form(False),
+    character_id: str | None = Query(default=None, max_length=64),
     user: AuthUser = Depends(current_user),
     rest: SupabaseRest = Depends(get_rest),
 ) -> dict[str, Any]:
-    twin = await _twin(rest, user)
+    twin = await target_twin(rest, user, character_id)
     if twin is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Create your twin's identity first.")
     if depicts_someone_else and not permission_confirmed:
@@ -208,8 +241,9 @@ async def upload_portrait(
 
 
 @router.delete("/twin/portrait", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_portrait(user: AuthUser = Depends(current_user), rest: SupabaseRest = Depends(get_rest)) -> None:
-    twin = await _twin(rest, user)
+async def delete_portrait(character_id: str | None = Query(default=None, max_length=64),
+                          user: AuthUser = Depends(current_user), rest: SupabaseRest = Depends(get_rest)) -> None:
+    twin = await target_twin(rest, user, character_id)
     if twin is None or not twin.get("portrait_path"):
         return
     old = twin["portrait_path"]
@@ -219,6 +253,49 @@ async def delete_portrait(user: AuthUser = Depends(current_user), rest: Supabase
     )
     if old.startswith(f"{user.id}/"):
         await rest.delete_object(user.token, BUCKET, old)
+
+
+@router.post("/characters", status_code=status.HTTP_201_CREATED)
+async def create_character(body: CharacterCreateIn, user: AuthUser = Depends(current_user),
+                           rest: SupabaseRest = Depends(get_rest)) -> dict[str, Any]:
+    """Make another, separate character. The personal self-twin is untouched; this one has its own description,
+    profile, portrait, conversations and memories."""
+    owned = await rest.select(user.token, "twins", {"select": "id", "owner_id": _eq(user.id),
+                                                    "limit": str(MAX_CHARACTERS + 1)})
+    if len(owned) >= MAX_CHARACTERS:
+        raise character_error("character_limit", f"You can have up to {MAX_CHARACTERS} characters.",
+                              status.HTTP_422_UNPROCESSABLE_ENTITY)
+    desc = body.description.strip()
+    row: dict[str, Any] = {"owner_id": user.id, "kind": "character", "name": body.name.strip()}
+    if not row["name"]:
+        raise character_error("invalid_name", "Give the character a name.", status.HTTP_422_UNPROCESSABLE_ENTITY)
+    if body.about is not None:
+        row["about"] = body.about.strip()
+    if desc:
+        row.update({"character_description": desc, "character_version": 1,
+                    "character_updated_at": datetime.now(timezone.utc).isoformat()})
+    try:
+        twin = await rest.insert(user.token, "twins", row)
+    except SupabaseError as exc:
+        if exc.status_code in (400, 409):
+            # The database refused a second twin or a kind='character' row: it has not been upgraded for multiple
+            # characters. Say so (actionably) instead of a bare 500, and keep the detail in the server log.
+            log.warning("character_insert_rejected status=%s: apply migration 20261015200000_multiple_characters",
+                        exc.status_code)
+            raise character_error(
+                "migration_required", "The database hasn't been upgraded to hold more than one character yet. "
+                "Apply the latest migration (20261015200000_multiple_characters) and try again.",
+                status.HTTP_503_SERVICE_UNAVAILABLE) from exc
+        raise
+    return {"twin": await _with_portrait_url(rest, user, twin), "character": character_view(twin, None)}
+
+
+@router.get("/characters/{character_id}")
+async def get_character(character_id: str, user: AuthUser = Depends(current_user),
+                        rest: SupabaseRest = Depends(get_rest)) -> dict[str, Any]:
+    twin = await owned_character(rest, user, character_id)
+    row = await get_profile_row(rest, user, twin["id"])
+    return {"twin": await _with_portrait_url(rest, user, twin), "character": character_view(twin, row)}
 
 
 @router.post("/onboarding/steps/{step}/complete")

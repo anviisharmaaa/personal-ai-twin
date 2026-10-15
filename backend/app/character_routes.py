@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 
 from app.auth import AuthUser, current_user
@@ -18,7 +18,7 @@ from app.character_store import (
 from app.chat import model_gate
 from app.config import get_settings
 from app.providers import build_analyzer, consent_version, provider_model
-from app.routes import _active_consent, _eq, _twin, _with_portrait_url
+from app.routes import _active_consent, _eq, _with_portrait_url, target_twin
 from app.schemas import AnalyzeIn, CharacterIn
 from app.supabase_rest import SupabaseError, SupabaseRest, get_rest
 
@@ -40,9 +40,10 @@ def _err(code: str, message: str, http: int) -> HTTPException:
 
 @router.put("/twin/character")
 async def save_character(
-    body: CharacterIn, user: AuthUser = Depends(current_user), rest: SupabaseRest = Depends(get_rest)
+    body: CharacterIn, character_id: str | None = Query(default=None, max_length=64),
+    user: AuthUser = Depends(current_user), rest: SupabaseRest = Depends(get_rest),
 ) -> dict[str, Any]:
-    twin = await _twin(rest, user)
+    twin = await target_twin(rest, user, character_id)
     if twin is None:
         raise _err("no_twin", "Create your twin's identity first.", status.HTTP_409_CONFLICT)
     current = twin.get("character_description") or ""
@@ -105,12 +106,13 @@ async def _record_failure(rest: SupabaseRest, user: AuthUser, twin_id: str, code
 async def analyze_character(
     body: AnalyzeIn,
     background: BackgroundTasks,
+    character_id: str | None = Query(default=None, max_length=64),
     user: AuthUser = Depends(current_user),
     rest: SupabaseRest = Depends(get_rest),
     analyzer: CharacterAnalyzer = Depends(get_analyzer),
 ) -> Any:
     settings = get_settings()
-    twin = await _twin(rest, user)
+    twin = await target_twin(rest, user, character_id)
     if twin is None:
         raise _err("no_twin", "Create your twin's identity first.", status.HTTP_409_CONFLICT)
 
@@ -151,7 +153,8 @@ async def analyze_character(
     # A local model can take minutes, longer than a browser request should stay open. So the request returns at once
     # (202) and the work continues in the background; the page polls /me, which reports analysis.state honestly.
     # The description, the previous profile and the failure record are only ever changed by _run_analysis.
-    fresh = await _twin(rest, user) or twin       # read before taking any slot: nothing below may raise
+    # read before taking any slot: nothing below may raise
+    fresh = await target_twin(rest, user, character_id) or twin
     if provider == "ollama" and not model_gate.try_acquire():
         # One local-model job at a time: say so rather than queueing silently behind a chat reply.
         raise _err("model_busy", "The local model is busy with another job. Try again in a moment.",

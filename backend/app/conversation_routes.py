@@ -33,7 +33,7 @@ from app.chat import (
 )
 from app.config import get_settings
 from app.providers import consent_version
-from app.routes import _active_consent, _eq, _twin, _with_portrait_url
+from app.routes import _active_consent, _eq, _twin, _with_portrait_url, owned_character
 from app.supabase_rest import SupabaseError, SupabaseRest, get_rest
 
 router = APIRouter(prefix="/api/v1")
@@ -99,17 +99,8 @@ async def _conversation(rest: SupabaseRest, user: AuthUser, cid: str) -> dict[st
     return rows[0]
 
 
-_CHARACTER_GONE = ("character_not_found", "That character doesn't exist.")
-
-
 async def _owned_character(rest: SupabaseRest, user: AuthUser, character_id: str) -> dict[str, Any]:
-    """A character id from the browser is only ever a request: it must be one of the signed-in user's own."""
-    if not _UUID.match(character_id):
-        raise _err(*_CHARACTER_GONE, status.HTTP_404_NOT_FOUND)
-    rows = await rest.select(user.token, "twins", {"select": "*", "id": _eq(character_id), "owner_id": _eq(user.id)})
-    if not rows:
-        raise _err(*_CHARACTER_GONE, status.HTTP_404_NOT_FOUND)
-    return rows[0]
+    return await owned_character(rest, user, character_id)
 
 
 async def _conversation_character(rest: SupabaseRest, user: AuthUser, conv: dict[str, Any]) -> dict[str, Any]:
@@ -131,7 +122,8 @@ async def list_characters(user: AuthUser = Depends(current_user), rest: Supabase
         desc = " ".join((t.get("character_description") or "").split())
         portrait = await _with_portrait_url(rest, user, t)
         out.append({
-            "id": t["id"], "name": t.get("name") or "", "portrait_url": portrait.get("portrait_url"),
+            "id": t["id"], "name": t.get("name") or "", "is_self": t.get("kind") == "self",
+            "portrait_url": portrait.get("portrait_url"),
             "summary": desc[:200] + ("…" if len(desc) > 200 else ""),
             "has_description": bool(desc), "profile_state": _profile_state(t, row),
             "conversation_count": len(mine),

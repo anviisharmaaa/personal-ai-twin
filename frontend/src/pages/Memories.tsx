@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Button, Card, Chip, EmptyState, Notice, Skeleton, TextArea } from "../components/ui";
 import {
-  useApprove, useCandidates, useEditMemory, useForget, useLearningPref, useMemories, useProposals, useProposeFromMemory,
+  useApprove, useCandidates, useCharacters, useEditMemory, useForget, useLearningPref, useMemories, useProposals, useProposeFromMemory,
   useReject, useResolveProposal, useRevisions, useSetLearning, type Candidate, type Memory, type Proposal,
 } from "../hooks/useChat";
 import { ApiError } from "../lib/api";
@@ -38,6 +38,15 @@ function Quotes({ items }: { items: { quote: string }[] }) {
       <ul className="mt-1 space-y-1">{items.map((q, i) => <li key={i} className="border-l-2 border-border pl-2">“{q.quote}” <span className="text-[11px]">— your own message</span></li>)}</ul>
     </details>
   );
+}
+
+/** Names the character a memory/suggestion belongs to, but only when there is more than one to tell apart. */
+function CharacterTag({ id }: { id?: string | null }) {
+  const chars = useCharacters();
+  const list = chars.data ?? [];
+  const c = list.find((x) => x.id === id);
+  if (list.length < 2 || !c) return null;
+  return <Chip>For {c.name}</Chip>;
 }
 
 function LearningCard() {
@@ -99,7 +108,7 @@ function CandidateCard({ c }: { c: Candidate }) {
   };
   return (
     <li className="rounded-[12px] border border-border bg-surface p-4">
-      <div className="flex flex-wrap gap-2"><Chip>{CATEGORY[c.category] ?? c.category}</Chip><Chip>{EVIDENCE[c.evidence_type] ?? c.evidence_type}</Chip></div>
+      <div className="flex flex-wrap gap-2"><CharacterTag id={c.character_id} /><Chip>{CATEGORY[c.category] ?? c.category}</Chip><Chip>{EVIDENCE[c.evidence_type] ?? c.evidence_type}</Chip></div>
       {editing ? <TextArea label="Edit before approving" value={text} maxLength={240} fieldClassName="min-h-20" onChange={(e) => setText(e.target.value)} className="mt-3" />
         : <p className="mt-3 text-sm font-medium">{c.statement}</p>}
       <Quotes items={c.supporting} />
@@ -133,7 +142,7 @@ function MemoryCard({ m }: { m: Memory }) {
   return (
     <li className="rounded-[12px] border border-border bg-surface p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Chip>{CATEGORY[m.category] ?? m.category}</Chip><Chip>{EVIDENCE[m.evidence_type] ?? m.evidence_type}</Chip>
+        <CharacterTag id={m.character_id} /><Chip>{CATEGORY[m.category] ?? m.category}</Chip><Chip>{EVIDENCE[m.evidence_type] ?? m.evidence_type}</Chip>
         {m.pinned && <Chip tone="ok">Pinned</Chip>}{m.edited && <Chip>Edited by you</Chip>}
       </div>
       {editing ? (
@@ -177,7 +186,7 @@ function ProposalCard({ p }: { p: Proposal }) {
     resolve.mutate({ id: p.id, action, text: action === "accept" && editing ? text.trim() : undefined }, { onError: (e) => setErr(say(e)) });
   return (
     <li className="rounded-[12px] border border-border bg-surface p-4">
-      <div className="flex flex-wrap gap-2"><Chip>{SECTION[p.section] ?? p.section}</Chip><Chip>{KIND[p.kind] ?? p.kind}</Chip>{p.status === "deferred" && <Chip>Saved for later</Chip>}</div>
+      <div className="flex flex-wrap gap-2"><CharacterTag id={p.character_id} /><Chip>{SECTION[p.section] ?? p.section}</Chip><Chip>{KIND[p.kind] ?? p.kind}</Chip>{p.status === "deferred" && <Chip>Saved for later</Chip>}</div>
       <p className="mt-3 text-xs text-muted">Would add to the interpretation of your twin:</p>
       {editing ? <TextArea label="Wording" value={text} maxLength={320} fieldClassName="min-h-20" onChange={(e) => setText(e.target.value)} />
         : <p className="mt-1 text-sm font-medium">{p.proposed_text}</p>}

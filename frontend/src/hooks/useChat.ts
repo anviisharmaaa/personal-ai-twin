@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 
 export type Character = {
-  id: string; name: string; portrait_url: string | null; summary: string; has_description: boolean;
+  id: string; name: string; is_self?: boolean; portrait_url: string | null; summary: string; has_description: boolean;
   profile_state: "missing" | "current" | "outdated"; conversation_count: number; last_activity_at: string | null;
 };
 export type Conversation = {
@@ -22,16 +22,16 @@ export type ChatStatus = {
 export type Evidence = { message_id: string; quote: string };
 export type Candidate = {
   id: string; statement: string; category: string; scope: string; evidence_type: string; supporting: Evidence[];
-  status: string; conversation_id: string | null; created_at: string;
+  status: string; conversation_id: string | null; created_at: string; character_id?: string | null;
 };
 export type Memory = {
   id: string; statement: string; category: string; scope: string; evidence_type: string; supporting: Evidence[];
   source_deleted: boolean; edited: boolean; pinned: boolean; status: "active" | "superseded"; superseded_by: string | null;
-  conversation_id: string | null; created_at: string; updated_at: string;
+  conversation_id: string | null; created_at: string; updated_at: string; character_id?: string | null;
 };
 export type Proposal = {
   id: string; memory_id: string | null; section: string; current_text: string | null; proposed_text: string;
-  kind: string; evidence: string[]; status: string; created_at: string; resolved_at: string | null;
+  kind: string; evidence: string[]; status: string; created_at: string; resolved_at: string | null; character_id?: string | null;
 };
 export type Revision = { id: string; profile: Record<string, unknown>; reason: string; proposal_id: string | null; created_at: string };
 export type LearningPref = {

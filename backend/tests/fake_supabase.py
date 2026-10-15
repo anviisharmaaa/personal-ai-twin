@@ -18,6 +18,7 @@ OWNER_COL = {"profiles": "id", "twins": "owner_id", "onboarding_steps": "user_id
              "memories": "owner_id", "profile_proposals": "owner_id", "profile_revisions": "owner_id"}
 # Column defaults the real database applies (the routes rely on a few of them).
 DEFAULTS: dict[str, dict[str, Any]] = {
+    "twins": {"kind": "self", "about": None},
     "conversations": {"title": "New conversation", "archived_at": None, "learning_reviewed_at": None},
     "messages": {"content": "", "used_memory_ids": [], "client_message_id": None, "reply_to": None, "provider": None,
                  "model": None, "first_token_ms": None, "duration_ms": None, "failure_code": None},
@@ -37,6 +38,7 @@ class FakeSupabase:
     def __init__(self) -> None:
         self.tables: dict[str, list[dict[str, Any]]] = {t: [] for t in OWNER_COL}
         self.objects: dict[str, bytes] = {}
+        self.legacy_schema = False      # True: behave like the database BEFORE the multiple-characters migration
         self.calls: list[tuple[str, str, dict[str, str]]] = []
         self._n = 0
 
@@ -110,8 +112,20 @@ class FakeSupabase:
             body = json.loads(req.content)
             if str(body.get(col)) != uid:
                 return httpx.Response(403, json={"code": "42501"})  # RLS violation
-            if table == "twins" and any(str(r[col]) == uid for r in rows):
-                return httpx.Response(409, json={"code": "23505"})
+            if table == "twins" and self.legacy_schema and (
+                    body.get("kind", "self") != "self" or any(str(r[col]) == uid for r in rows)):
+                return httpx.Response(409, json={"code": "23505"})      # twins_kind_check / twins_one_per_owner
+            if table == "twins":      # kind check; one self per owner; cap
+                kind = body.get("kind", "self")
+                if kind not in ("self", "character"):
+                    return httpx.Response(400, json={"code": "23514"})
+                if kind == "self" and any(str(r[col]) == uid and r.get("kind") == "self" for r in rows):
+                    return httpx.Response(409, json={"code": "23505"})
+                if sum(1 for r in rows if str(r[col]) == uid) >= 25:
+                    return httpx.Response(400, json={"code": "23514"})
+            if "twin_id" in body and table != "character_profiles" and not any(
+                    str(t["id"]) == str(body["twin_id"]) and str(t["owner_id"]) == uid for t in self.tables["twins"]):
+                return httpx.Response(403, json={"code": "42501"})   # RLS/FK: only on a twin you own
             if table == "character_profiles" and any(r["twin_id"] == body.get("twin_id") for r in rows):
                 return httpx.Response(409, json={"code": "23505"})  # unique(twin_id)
             if table == "onboarding_steps":
@@ -139,6 +153,13 @@ class FakeSupabase:
             return httpx.Response(201, json=[row])
         if req.method == "PATCH":
             body = json.loads(req.content)
+            if "owner_id" in body and str(body["owner_id"]) != uid:
+                return httpx.Response(403, json={"code": "42501"})  # RLS WITH CHECK
+            if table == "twins" and "kind" in body and any(r.get("kind") != body["kind"] for r in visible):
+                return httpx.Response(400, json={"code": "23514"})  # twins_guard: kind is immutable
+            if table == "conversations" and "twin_id" in body and any(
+                    r.get("twin_id") != body["twin_id"] for r in visible):
+                return httpx.Response(400, json={"code": "23514"})  # conversations_binding_immutable
             for r in visible:
                 r.update(body)
             return httpx.Response(200, json=visible)

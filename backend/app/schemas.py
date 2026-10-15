@@ -35,6 +35,13 @@ class CharacterIn(_Strict):
     base_version: int = Field(ge=0)
 
 
+class CharacterCreateIn(_Strict):
+    """A new, separately identified character: its own name, description and (later) portrait and profile."""
+    name: str = Field(min_length=1, max_length=80)
+    description: str = Field(default="", max_length=8000)
+    about: str | None = Field(default=None, max_length=2000)
+
+
 class AnalyzeIn(_Strict):
     version: int = Field(ge=1)
 

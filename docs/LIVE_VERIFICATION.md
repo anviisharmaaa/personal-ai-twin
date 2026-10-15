@@ -179,3 +179,15 @@ prints ALL PASSED.
 expectation (note any that did not), and the `two_account_check` result.
 
 Status today: mocked (backend, vitest, Playwright) and real-socket-with-stub-model checks pass; every item above is unverified.
+
+## 8. Multiple characters and real chat (LIVE; stays UNVERIFIED until you run it)
+
+1. `git pull` on `character-workspace` (the repo now has a `.gitattributes` that normalises line endings; if the pull is
+   blocked by line-ending-only changes, run `git checkout -- .` after checking `git diff` shows nothing you wrote).
+2. Apply `supabase/migrations/20261015200000_multiple_characters.sql` to the DEVELOPMENT project (SQL editor), restart the backend.
+3. Set `MADHUORA_TEST_A_EMAIL` / `MADHUORA_TEST_A_PASSWORD` (throw-away dev account that has granted AI consent and
+   has a twin), make sure Ollama is running with your model, then: `python -m scripts.live_multi_character_check`.
+   It creates two invented characters, streams a real reply from each, checks incremental tokens, saved status,
+   reload, a second conversation with the same character, and that lists never mix. It prints both replies; you judge
+   whether each sounds like its own character. Exit code 0 = all checks passed.
+4. In the browser: Twin Studio -> "+ New character" -> Conversations -> choose the character -> send a message -> reload.
