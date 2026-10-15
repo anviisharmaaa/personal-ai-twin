@@ -39,6 +39,9 @@ const ERRORS: Record<string, string> = {
   too_long: "That message is too long.",
   cancelled: "You stopped this reply.",
   character_not_found: "That character isn’t available any more.",
+  not_configured: "Chat isn’t set up on the server yet, so the conversation couldn’t be started.",
+  no_twin: "Create your twin’s identity first.",
+  character_required: "Choose which character to talk to.",
 };
 const errText = (code: string, fallback?: string) => ERRORS[code] ?? fallback ?? "Something went wrong.";
 
@@ -175,11 +178,19 @@ export function Conversations() {
   const del = useDeleteConversation();
   const mems = useMemories();
   const activeId = params.get("c");
-  // The character being addressed comes from the open conversation (it is bound to one); only before a conversation
-  // exists does it come from the picker choice in the URL. Everything below (status, list, header, composer) follows it.
+  // Which character is being addressed. A conversation is bound to exactly one character, so for an open conversation the
+  // conversation's own character wins; before one exists it is the picker choice in the URL (?ch=). The mapping is remembered
+  // (known) so a conversation that was just created, or whose list is still loading or refreshing, never reads as "no
+  // character chosen". The picker is shown only when there is neither a conversation nor a chosen character.
+  const known = useRef(new Map<string, string>());
+  for (const c of convs.data ?? []) known.current.set(c.id, c.character_id);
   const active = convs.data?.find((c) => c.id === activeId);
-  const characterId = active?.character_id ?? params.get("ch");
-  const character = chars.data?.find((c) => c.id === characterId) ?? null;
+  const characterId = active?.character_id ?? (activeId ? known.current.get(activeId) : undefined) ?? params.get("ch");
+  // The character record is kept while the list refetches (or briefly fails), so the open chat is not torn down by a reload.
+  const found = chars.data?.find((c) => c.id === characterId) ?? null;
+  const lastChar = useRef<Character | null>(null);
+  if (found) lastChar.current = found;
+  const character = found ?? (lastChar.current && lastChar.current.id === characterId ? lastChar.current : null);
   const status = useChatStatus(characterId);
   const msgs = useMessages(activeId);
   const [draft, setDraft] = useState("");
@@ -187,6 +198,7 @@ export function Conversations() {
   const [announce, setAnnounce] = useState("");
   const [confirmDel, setConfirmDel] = useState(false);
   const [hint, setHint] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const ctrl = useRef<AbortController | null>(null);
   const runConv = useRef<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -209,11 +221,12 @@ export function Conversations() {
   }, [activeId]);
   useEffect(() => { endRef.current?.scrollIntoView?.({ block: "end" }); }, [messages.length, pending?.reply, pending?.phase]);
 
-  const open = (id: string) => setParams({ c: id }, { replace: false });
+  // Both ids stay in the address, so reloading or sharing the tab restores the same character and conversation.
+  const open = (id: string) => setParams(characterId ? { c: id, ch: characterId } : { c: id }, { replace: false });
   // Choosing (or leaving) a character always drops the open conversation, any draft, and any in-flight reply, so a message
   // typed for one character can never be delivered into another character's conversation.
   const chooseCharacter = (id: string | null) => {
-    ctrl.current?.abort(); runConv.current = null; setPending(null); setDraft(""); setHint(false);
+    ctrl.current?.abort(); runConv.current = null; setPending(null); setDraft(""); setHint(false); setCreateError(null);
     setParams(id ? { ch: id } : {}, { replace: false });
   };
   const newConversation = () => { if (characterId) chooseCharacter(characterId); };
@@ -260,11 +273,19 @@ export function Conversations() {
   const send = async () => {
     const text = draft.trim();
     if (!text || busy || !canChat) return;
+    setCreateError(null);
     if (!characterId || !character || (active && active.character_id !== characterId)) return;
     let cid = activeId;
     if (!cid) {
-      try { cid = (await create.mutateAsync(characterId)).id; } catch { return; }
-      setParams({ c: cid }, { replace: true });
+      try {
+        cid = (await create.mutateAsync(characterId)).id;
+      } catch (e) {
+        // Creating the conversation failed: say so here, in the current chat. The character stays selected and the draft is kept.
+        setCreateError(e instanceof ApiError ? errText(e.code ?? "", e.message) : "Couldn’t start the conversation. Please try again.");
+        return;
+      }
+      known.current.set(cid, characterId);
+      setParams({ c: cid, ch: characterId }, { replace: true });
     }
     setDraft("");
     void run(cid, text, newKey());
@@ -313,7 +334,11 @@ export function Conversations() {
         <div className="mt-4"><Notice>The local model is busy with another job (for example understanding the character). A new reply will wait for it to finish — try again in a moment.</Notice></div>
       )}
 
-      {!characterId && (
+      {activeId && !characterId && (
+        convs.isLoading || convs.isFetching ? <div className="mt-6 space-y-4"><Skeleton className="h-20" /><Skeleton className="h-64" /></div>
+        : <div className="mt-6"><Notice tone="error">That conversation isn’t available. It may have been deleted. <button onClick={() => chooseCharacter(null)} className="font-medium underline underline-offset-4">Choose a character</button></Notice></div>
+      )}
+      {!characterId && !activeId && (
         chars.isLoading ? <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><Skeleton className="h-40" /><Skeleton className="h-40" /></div>
         : chars.isError ? <div className="mt-6"><Notice tone="error">Couldn’t load your characters. Please try again.</Notice></div>
         : (chars.data ?? []).length === 0 ? (
@@ -387,6 +412,7 @@ export function Conversations() {
           {pending?.started?.context.trimmed && (
             <p className="mt-2 text-xs text-muted">This conversation is long, so the reply was based on the latest {pending.started.context.earlier_messages_used} of {pending.started.context.total} earlier messages.</p>
           )}
+          {createError && <div className="mt-2"><Notice tone="error">{createError}</Notice></div>}
           {hint && <p className="mt-2 text-xs text-muted">That sounded like a correction. If you’d like Madhuora to remember it, use “Review what Madhuora learned” — nothing is saved until you approve it.</p>}
           <p className="sr-only" role="status" aria-live="polite">{announce}</p>
 

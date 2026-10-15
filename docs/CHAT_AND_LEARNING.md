@@ -71,6 +71,24 @@ the model still produced, history turns used, and the generation settings. Never
 through the old request shape and the new one, reports first-token / total time, word counts, boilerplate and reasoning
 flags, and the effect of 0 / 6 / 24 earlier messages. The mocked tests prove what is *sent*; they say nothing about speed.
 
+## Conversations page: staying in the chat (bug fix)
+
+**Root cause.** The active character was derived only from the conversations *list* (`active?.character_id`) or the `?ch=`
+URL parameter. After the first message of a new conversation the page replaced the address with `?c=<id>`, which dropped
+`?ch=`, and the new conversation was not in the cached list until the post-create refetch finished. For that interval no
+character was resolved, so the page rendered the "Talk to a character" picker and unmounted the chat (the stream kept running
+in the background; the chat reappeared after the list arrived, or looked lost on a slow connection). Clicking a conversation in
+the sidebar and reloading `?c=` also dropped `?ch=` and flashed the picker while the list loaded. The existing browser tests
+missed it because the mocked list answered instantly.
+
+**Fix (`src/pages/Conversations.tsx`).** Both ids stay in the address (`?c=` and `?ch=`); a remembered conversation-to-character
+map and the last resolved character record survive list refetches; the picker shows only when there is neither a conversation
+nor a chosen character; a loading list shows a skeleton and an unknown conversation shows an explanatory notice; a failed
+conversation creation shows its error in the chat and keeps the draft. "Change character" and the delete flow remain the only
+ways back to the picker.
+
+**Tests.** `e2e/chat-stays-open.spec.ts` (10 tests, slow mocked list and stream; five of them fail on the old code and pass now).
+
 ## Latency investigation (first-token time)
 
 **Baseline supplied after `b581113` (real Ollama, qwen3.5:9b; a measurement, not a diagnosis).** Median first token 12,783 ms

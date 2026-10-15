@@ -24,6 +24,10 @@ export type ChatBackend = {
   chars: Char[]; convs: Conv[]; msgs: Record<string, Msg[]>; learning: boolean;
   candidates: Cand[]; memories: Mem[]; proposals: Prop[]; revisions: { id: string; profile: object; reason: string; proposal_id: string | null; created_at: string }[];
   reviewing: boolean; reviewResult: Cand[]; conflictOnApprove: boolean;
+  /** Latency (ms) the mocked server adds to GET /conversations and to the stream, to model a slow real network. */
+  listDelayMs: number; streamDelayMs: number;
+  /** When set, POST /conversations is refused with this code. */
+  createRefuses: string | null;
   calls: { method: string; path: string; body?: unknown }[]; n: number;
 };
 
@@ -31,7 +35,7 @@ export const newChat = (init: Partial<ChatBackend> = {}): ChatBackend => ({
   reason: null, isSample: false, modelBusy: false, profileOutdated: false, profileState: "current", mode: "ok", reply: "Hello there, friend.", refuseCode: "model_busy",
   chars: [{ id: "ch1", name: "Meera", portrait_url: null, summary: "Warm with friends, quiet at parties, loves masala chai.", has_description: true, profile_state: "current" }],
   convs: [], msgs: {}, learning: false, candidates: [], memories: [], proposals: [], revisions: [], reviewing: false, reviewResult: [],
-  conflictOnApprove: false, calls: [], n: 0, ...init,
+  conflictOnApprove: false, listDelayMs: 0, streamDelayMs: 0, createRefuses: null, calls: [], n: 0, ...init,
 });
 
 const sse = (event: string, data: object) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -68,8 +72,12 @@ export async function mockChat(page: Page, ch: ChatBackend) {
       return json({ available: ch.reason === null, character_id: wanted ?? ch.chars[0]?.id ?? null, reason: ch.reason, provider: ch.isSample ? "mock" : "ollama", is_sample: ch.isSample, model_busy: ch.modelBusy,
         profile_state: ch.profileState, profile_outdated: ch.profileOutdated, limits: { max_user_chars: 4000, context_messages: 24 } });
     }
-    if (path === "/api/v1/conversations" && m === "GET") return json({ conversations: ch.convs });
+    if (path === "/api/v1/conversations" && m === "GET") {
+      if (ch.listDelayMs) await new Promise((res) => setTimeout(res, ch.listDelayMs));
+      return json({ conversations: ch.convs });
+    }
     if (path === "/api/v1/conversations" && m === "POST") {
+      if (ch.createRefuses) return err(503, ch.createRefuses, "refused by the mock");
       const wanted = String(body.character_id ?? "");
       if (!ch.chars.some((x) => x.id === wanted)) return err(404, "character_not_found", "That character doesn't exist.");
       const c: Conv = { id: `c${++ch.n}`, character_id: wanted, title: "New conversation", created_at: now(), last_activity_at: now(), archived_at: null, learning_reviewed_at: null, learning_failure_code: null };
@@ -92,6 +100,7 @@ export async function mockChat(page: Page, ch: ChatBackend) {
       }
       ch.msgs[cid] = ch.msgs[cid].filter((x) => !(x.role === "assistant" && x.reply_to === user!.id && x.status !== "complete"));
       if (ch.mode === "hang") return; // never answers: the browser's Stop is what ends this
+      if (ch.streamDelayMs) await new Promise((res) => setTimeout(res, ch.streamDelayMs));
       const used = ch.memories.filter((x) => x.status === "active");
       const aid = `a${++ch.n}`;
       const started = sse("started", { user_message_id: user.id, assistant_message_id: aid, provider: "ollama", model: "qwen-test:9b", is_sample: ch.isSample, replayed: false,
