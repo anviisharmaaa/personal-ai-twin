@@ -41,6 +41,8 @@ export type Backend = {
   /** "ok" returns the mock profile; any other value is returned as an error code from the analysis endpoint. */
   analyze: string;
   analyzeDelayMs: number;
+  /** Set while the mock server is "generating" (the real server answers 202 and works on in the background). */
+  runningSince?: string | null;
 };
 
 export function newBackend(init: Partial<Backend> = {}): Backend {
@@ -87,7 +89,8 @@ const view = (be: Backend) => {
     generated_by: c.profile ? (be.provider === "mock" ? { provider: "mock", model: "sample-fixture", is_sample: true }
       : be.provider === "ollama" ? { provider: "ollama", model: "qwen-test:9b", is_sample: false }
       : { provider: "nvidia", model: "nvidia/test-model", is_sample: false }) : null,
-    failure: c.failure };
+    failure: c.failure,
+    analysis: be.runningSince ? { state: "running", started_at: be.runningSince } : { state: "idle", started_at: null } };
 };
 
 export async function mockApp(page: Page, be: Backend, opts: { auth?: boolean; theme?: "light" | "dark"; supabase?: (r: Route) => Promise<void> | void } = {}) {
@@ -129,13 +132,17 @@ export async function mockApp(page: Page, be: Backend, opts: { auth?: boolean; t
       return json({ twin: be.twin, character: view(be) });
     }
     if (path === "/api/v1/twin/character/analyze") {
-      if (be.analyzeDelayMs) await new Promise((res) => setTimeout(res, be.analyzeDelayMs));
-      if (be.analyze !== "ok") {
-        be.character = { ...be.character, failure: be.analyze };
-        return json({ detail: { code: be.analyze, message: be.analyze === "quota_exhausted" ? "The AI service's free allowance is used up for now." : be.analyze === "local_unavailable" ? "Ollama isn't running or couldn't be reached." : "The AI took too long to respond. Please try again." } }, be.analyze === "quota_exhausted" || be.analyze.startsWith("local_") ? 503 : 504);
-      }
-      be.character = { ...be.character, profile: MOCK_PROFILE, profileVersion: (body as { version: number }).version, failure: null };
-      return json({ character: view(be), cached: false });
+      // Mirrors the real server: answer 202 at once, then finish (or fail) in the background; /me shows the state.
+      const version = (body as { version: number }).version;
+      if (be.runningSince) return json({ detail: { code: "in_progress", message: "An analysis is already running." } }, 409);
+      be.runningSince = new Date().toISOString();
+      setTimeout(() => {
+        be.runningSince = null;
+        be.character = be.analyze !== "ok"
+          ? { ...be.character, failure: be.analyze }
+          : { ...be.character, profile: MOCK_PROFILE, profileVersion: version, failure: null };
+      }, be.analyzeDelayMs || 50);
+      return json({ character: view(be), cached: false }, 202);
     }
     if (path === "/api/v1/consents/ai-processing") { be.consent = req.method() !== "DELETE"; return req.method() === "DELETE" ? r.fulfill({ status: 204, headers: CORS }) : json({ ok: true }, 201); }
     if (path.startsWith("/api/v1/onboarding/steps/")) {

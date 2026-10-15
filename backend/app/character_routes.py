@@ -2,11 +2,19 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi.responses import JSONResponse
 
 from app.auth import AuthUser, current_user
 from app.character import MIN_DESCRIPTION_CHARS, SCHEMA_VERSION, AnalysisError, CharacterAnalyzer
-from app.character_store import character_view, get_profile_row, qualified_model, sha256, stored_provider
+from app.character_store import (
+    character_view,
+    get_profile_row,
+    in_flight,
+    qualified_model,
+    sha256,
+    stored_provider,
+)
 from app.config import get_settings
 from app.providers import build_analyzer, consent_version, provider_model
 from app.routes import _active_consent, _eq, _twin, _with_portrait_url
@@ -16,9 +24,8 @@ from app.supabase_rest import SupabaseError, SupabaseRest, get_rest
 router = APIRouter(prefix="/api/v1")
 log = logging.getLogger("madhuora.character")
 
-# Twins with an analysis in flight in THIS process. Stops double-clicks and duplicate tabs from paying twice.
-# (A multi-process deployment would need a database lock instead; noted in the README.)
-_in_flight: set[str] = set()
+# Twins with an analysis in flight in THIS process (see character_store.InFlight).
+_in_flight = in_flight
 
 
 def get_analyzer() -> CharacterAnalyzer:
@@ -96,10 +103,11 @@ async def _record_failure(rest: SupabaseRest, user: AuthUser, twin_id: str, code
 @router.post("/twin/character/analyze")
 async def analyze_character(
     body: AnalyzeIn,
+    background: BackgroundTasks,
     user: AuthUser = Depends(current_user),
     rest: SupabaseRest = Depends(get_rest),
     analyzer: CharacterAnalyzer = Depends(get_analyzer),
-) -> dict[str, Any]:
+) -> Any:
     settings = get_settings()
     twin = await _twin(rest, user)
     if twin is None:
@@ -139,7 +147,19 @@ async def analyze_character(
         raise _err("daily_limit", "You've reached today's analysis limit. Please try again tomorrow.",
                    status.HTTP_429_TOO_MANY_REQUESTS)
 
+    # A local model can take minutes, longer than a browser request should stay open. So the request returns at once
+    # (202) and the work continues in the background; the page polls /me, which reports analysis.state honestly.
+    # The description, the previous profile and the failure record are only ever changed by _run_analysis.
     _in_flight.add(twin["id"])
+    background.add_task(_run_analysis, rest, user, twin, description, version, digest, row, analyzer, provider)
+    fresh = await _twin(rest, user) or twin
+    return JSONResponse({"character": character_view(fresh, row), "cached": False},
+                        status_code=status.HTTP_202_ACCEPTED)
+
+
+async def _run_analysis(rest: SupabaseRest, user: AuthUser, twin: dict[str, Any], description: str, version: int,
+                        digest: str, row: dict[str, Any] | None, analyzer: CharacterAnalyzer, provider: str) -> None:
+    settings = get_settings()
     try:
         try:
             result = await analyzer.analyze(description)
@@ -149,7 +169,7 @@ async def analyze_character(
             log.warning("analysis_failed code=%s provider=%s detail=%s", exc.code, provider, exc.detail or "-")
             await _record_usage(rest, user, False, provider_model(settings), None, None, None)
             await _record_failure(rest, user, twin["id"], exc.code, row)
-            raise _err(exc.code, exc.message, exc.status_code) from exc
+            return
         await _record_usage(rest, user, True, result.model, result.input_tokens, result.output_tokens,
                             result.latency_ms)
 
@@ -170,9 +190,12 @@ async def analyze_character(
         else:
             await rest.insert(user.token, "character_profiles",
                               {"twin_id": twin["id"], "owner_id": user.id, **fields})
+    except SupabaseError:
+        log.warning("analysis_persist_failed provider=%s", provider)
+        await _record_failure(rest, user, twin["id"], "persist_failed", row)
+    except Exception as exc:  # noqa: BLE001 - a background task must never die silently with the page waiting
+        # Only the exception TYPE: its message or traceback locals could contain the user's text.
+        log.error("analysis_crashed provider=%s type=%s", provider, type(exc).__name__)
+        await _record_failure(rest, user, twin["id"], "internal_error", row)
     finally:
         _in_flight.discard(twin["id"])
-
-    # Re-read so a description that changed *during* generation shows this profile as outdated, not current.
-    fresh_twin = await _twin(rest, user) or twin
-    return {"character": character_view(fresh_twin, await get_profile_row(rest, user, twin["id"])), "cached": False}

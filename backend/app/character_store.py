@@ -1,12 +1,39 @@
 """Reading the stored character state and shaping it for the client."""
 
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from app.auth import AuthUser
 from app.character import MIN_DESCRIPTION_CHARS
 from app.supabase_rest import SupabaseRest
+
+
+class InFlight:
+    """Analyses running in THIS process (twin id -> start time). Stops double clicks and second tabs from running a
+    second generation, and lets /me say honestly that one is running. A multi-process deployment would need a
+    database lock instead (README)."""
+
+    def __init__(self) -> None:
+        self._since: dict[str, datetime] = {}
+
+    def add(self, twin_id: str) -> None:
+        self._since[twin_id] = datetime.now(timezone.utc)
+
+    def discard(self, twin_id: str) -> None:
+        self._since.pop(twin_id, None)
+
+    def clear(self) -> None:
+        self._since.clear()
+
+    def __contains__(self, twin_id: object) -> bool:
+        return twin_id in self._since
+
+    def since(self, twin_id: str) -> datetime | None:
+        return self._since.get(twin_id)
+
+
+in_flight = InFlight()
 
 
 def sha256(text: str) -> str:
@@ -82,6 +109,9 @@ def character_view(twin: dict[str, Any], row: dict[str, Any] | None) -> dict[str
         "generated_at": row.get("generated_at") if row and profile is not None else None,
         "generated_by": _generated_by(row) if row and profile is not None else None,
         "failure": failure,
+        # Real state only: "running" while a generation is actually in progress on the server, else "idle".
+        "analysis": ({"state": "running", "started_at": since.isoformat()}
+                     if (since := in_flight.since(str(twin.get("id")))) else {"state": "idle", "started_at": None}),
     }
 
 

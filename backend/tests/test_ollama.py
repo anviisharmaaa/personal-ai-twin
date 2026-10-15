@@ -28,6 +28,7 @@ from app.providers import (
     provider_info,
     provider_model,
 )
+from tests.helpers import analyze
 from tests.test_grounding import RICH, item
 from tests.test_providers import start
 
@@ -246,7 +247,7 @@ def test_analysis_needs_the_ollama_specific_consent_and_stores_the_provider(
         client: TestClient, ollama_mode: None, monkeypatch: pytest.MonkeyPatch) -> None:
     h = start(client)                                   # consents to the *ollama* version
     app.dependency_overrides[get_analyzer] = lambda: ollama(lambda _: body_for({"core_traits": [item("Warm")]}))
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h)
+    r = analyze(client, h, 1)
     assert r.status_code == 200
     assert r.json()["character"]["generated_by"] == {"provider": "ollama", "model": "qwen-test:9b", "is_sample": False}
     # Switching to NVIDIA makes the Ollama agreement void: consent is required again, the profile stays visible.
@@ -255,13 +256,13 @@ def test_analysis_needs_the_ollama_specific_consent_and_stores_the_provider(
     me = client.get("/api/v1/me", headers=h).json()
     assert me["ai_consent"]["granted"] is False and me["character"]["generated_by"]["provider"] == "ollama"
     app.dependency_overrides.pop(get_analyzer, None)
-    assert client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h).status_code == 403
+    assert analyze(client, h, 1).status_code == 403
 
 
 def test_ollama_down_keeps_the_last_profile_and_never_falls_back(client: TestClient, ollama_mode: None) -> None:
     h = start(client)
     app.dependency_overrides[get_analyzer] = lambda: ollama(lambda _: body_for({"core_traits": [item("Warm")]}))
-    assert client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h).status_code == 200
+    assert analyze(client, h, 1).status_code == 200
     before = client.get("/api/v1/me", headers=h).json()["character"]["profile"]
     client.put("/api/v1/twin/character", json={"description": RICH, "base_version": 1}, headers=h)
 
@@ -269,7 +270,7 @@ def test_ollama_down_keeps_the_last_profile_and_never_falls_back(client: TestCli
         raise httpx.ConnectError("refused", request=req)
 
     app.dependency_overrides[get_analyzer] = lambda: ollama(down)
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 2}, headers=h)
+    r = analyze(client, h, 2)
     assert r.status_code == 503 and r.json()["detail"]["code"] == "local_unavailable"
     me = client.get("/api/v1/me", headers=h).json()
     assert me["character"]["profile"] == before and me["character"]["failure"] == "local_unavailable"
@@ -282,7 +283,7 @@ def test_not_configured_ollama_is_an_honest_error_not_a_sample(client: TestClien
     _in_flight.clear()
     app.dependency_overrides.pop(get_analyzer, None)
     h = start(client)
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h)
+    r = analyze(client, h, 1)
     assert r.status_code == 503 and r.json()["detail"]["code"] == "not_configured"
     assert client.get("/api/v1/me", headers=h).json()["character"]["profile"] is None
 
@@ -333,12 +334,12 @@ def test_a_failed_analysis_is_logged_without_any_text_and_the_description_and_pr
 
     h = start(client)
     app.dependency_overrides[get_analyzer] = lambda: ollama(lambda _: body_for({"core_traits": [item("Warm")]}))
-    assert client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h).status_code == 200
+    assert analyze(client, h, 1).status_code == 200
     before = client.get("/api/v1/me", headers=h).json()["character"]["profile"]
     client.put("/api/v1/twin/character", json={"description": RICH, "base_version": 1}, headers=h)
     app.dependency_overrides[get_analyzer] = lambda: ollama(lambda _: chat(f"not json {PRIVATE_TEXT}"))
     with caplog.at_level(logging.WARNING, logger="madhuora.character"):
-        r = client.post("/api/v1/twin/character/analyze", json={"version": 2}, headers=h)
+        r = analyze(client, h, 2)
     assert r.status_code == 502 and r.json()["detail"]["code"] == "not_json"
     logged = " ".join(rec.getMessage() for rec in caplog.records)
     assert "code=not_json" in logged and "provider=ollama" in logged
@@ -362,12 +363,12 @@ def test_consent_given_for_another_provider_is_outdated_and_agreeing_again_unblo
     me = client.get("/api/v1/me", headers=h).json()
     c = me["ai_consent"]
     assert c["granted"] is False and c["version"] == "2026-10-v3-nvidia" and c["current_version"] == "2026-10-v3-ollama"
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h)
+    r = analyze(client, h, 1)
     assert r.status_code == 403 and r.json()["detail"]["code"] == "consent_required"
     # The old wording cannot be agreed to under the new provider; the new one can, and /me reflects it at once.
     assert client.post("/api/v1/consents/ai-processing", json={"version": "2026-10-v3-nvidia"}, headers=h).status_code == 409
     assert client.post("/api/v1/consents/ai-processing", json={"version": c["current_version"]}, headers=h).status_code == 201
     c2 = client.get("/api/v1/me", headers=h).json()["ai_consent"]
     assert c2["granted"] is True and c2["version"] == "2026-10-v3-ollama"
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h)
+    r = analyze(client, h, 1)
     assert r.status_code == 502 and r.json()["detail"]["code"] == "not_json"   # now it reaches the model (and fails honestly)

@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     ollama_reasoning_effort: str = "none"
     ollama_max_output_tokens: int = Field(default=4096, ge=512, le=8192)
     # Local inference can be slow on CPU, so this is separate from the cloud timeout.
-    ollama_timeout_seconds: float = Field(default=300.0, ge=10.0, le=1800.0)
+    ollama_timeout_seconds: float = Field(default=600.0, ge=10.0, le=1800.0)
     openai_api_key: str = ""
     # Model used ONLY for character analysis. No default in code: the operator chooses it explicitly
     # (see .env.example) and nothing here ever switches models on its own.

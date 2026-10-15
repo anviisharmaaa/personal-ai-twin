@@ -346,8 +346,8 @@ test.describe("Character workspace (mocked backend and mocked analysis)", () => 
     await open(page, be);
     await page.getByLabel("Describe the person").fill(DESCRIPTION + " Extra detail.");
     await page.getByRole("button", { name: "Update the interpretation" }).click();
-    await expect(page.getByRole("alert").filter({ hasText: "took too long" })).toBeVisible();
-    await expect(page.getByText("Your description is saved. You can retry.")).toBeVisible();
+    await expect(page.getByRole("alert").filter({ hasText: "took too long" })).toBeVisible(); // read back from the server, not assumed
+    await expect(page.getByRole("button", { name: "Update the interpretation" })).toBeEnabled(); // spinner stopped; retry possible
     await expect(page.getByText("Warm and teasing with close friends")).toBeVisible(); // last good profile still there
     await expect(page.getByText(/made from an earlier version of your description/)).toBeVisible(); // and not called current
     await expect(page.getByLabel("Describe the person")).toHaveValue(DESCRIPTION + " Extra detail.");
@@ -437,7 +437,7 @@ test.describe("Character workspace (mocked backend and mocked analysis)", () => 
     await expect(page.getByText(/Analysed by a model running on this computer \(Ollama\)/)).toBeVisible();
     await expect(page.getByText(/Development AI provider/)).toHaveCount(0);
     await page.getByRole("button", { name: "Understand this character" }).click();
-    await expect(page.getByText(/with the local model… this can take a minute or two/)).toBeVisible();
+    await expect(page.getByText(/with the local model… .* so far\. A local model can take several minutes/)).toBeVisible();
     await expect(page.getByText(/made by Ollama \(local model\)/)).toBeVisible();
   });
 
@@ -446,7 +446,7 @@ test.describe("Character workspace (mocked backend and mocked analysis)", () => 
     await open(page, be);
     await page.getByLabel("Describe the person").fill(DESCRIPTION + " Extra detail.");
     await page.getByRole("button", { name: "Update the interpretation" }).click();
-    await expect(page.getByRole("alert").filter({ hasText: "Ollama isn't running" })).toBeVisible();
+    await expect(page.getByRole("alert").filter({ hasText: "Ollama isn’t running" })).toBeVisible();
     await expect(page.getByText("Warm and teasing with close friends")).toBeVisible();
     await expect(page.getByLabel("Describe the person")).toHaveValue(DESCRIPTION + " Extra detail.");
   });
@@ -465,10 +465,24 @@ test.describe("Character workspace (mocked backend and mocked analysis)", () => 
     await open(page, be);
     await page.getByLabel("Describe the person").fill(DESCRIPTION + " More detail.");
     await page.getByRole("button", { name: "Update the interpretation" }).click();
-    await expect(page.getByText(/free allowance is used up/)).toBeVisible();
+    await expect(page.getByText(/free AI allowance is used up/)).toBeVisible();
     await expect(page.getByLabel("Describe the person")).toHaveValue(DESCRIPTION + " More detail.");
     await expect(page.getByText("Warm and teasing with close friends")).toBeVisible(); // last good profile kept
     expect(be.calls.filter((c) => c.path.endsWith("/analyze"))).toHaveLength(1); // no automatic retry
+  });
+
+  test("a long analysis survives a page reload: the server's running state is shown, then the result, with no duplicate request", async ({ page }) => {
+    const be = withCharacter(false, { provider: "ollama", analyzeDelayMs: 4000 });
+    await open(page, be);
+    await page.getByRole("button", { name: "Understand this character" }).click();
+    await expect(page.getByText(/so far\. A local model can take several minutes/)).toBeVisible();
+    await page.reload();                                                   // leave and come back mid-generation
+    await page.getByRole("tab", { name: "Character" }).click();
+    await expect(page.getByText(/so far\. A local model can take several minutes/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Understand this character" })).toBeDisabled();
+    await expect(page.getByRole("heading", { name: "What Madhuora understood" })).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(/so far\./)).toHaveCount(0);               // loading state ended, nothing abandoned
+    expect(be.calls.filter((c) => c.path.endsWith("/analyze"))).toHaveLength(1);
   });
 
   test("consent can be given again after withdrawal", async ({ page }) => {

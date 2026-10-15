@@ -55,7 +55,18 @@ export function CharacterEditor({ twin, character, consentGranted, provider, mod
   useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
 
   const aiOff = ready.data?.configured?.ai === false;
-  const busy = save.isPending || analyze.isPending || complete.isPending;
+  const running = character.analysis?.state === "running";
+  const busy = save.isPending || analyze.isPending || complete.isPending || running;
+  const elapsed = useElapsed(running ? character.analysis?.started_at ?? null : null);
+
+  // After this page started an analysis, say once when it has finished successfully. (A failure is shown from
+  // `character.failure`.) Works for a 2-second job and for a 5-minute one, because it waits for the server's own state.
+  const started = useRef(false);
+  useEffect(() => {
+    if (!started.current || running || analyze.isPending) return;
+    started.current = false;
+    if (character.status === "current" && !character.failure) setNote("Interpretation updated.");
+  }, [running, analyze.isPending, character.status, character.failure]);
 
   // Persist first; returns the version that was actually saved so analysis can't read a stale one.
   const persist = async (): Promise<number> => {
@@ -78,7 +89,8 @@ export function CharacterEditor({ twin, character, consentGranted, provider, mod
     try {
       const v = await persist();
       const r = await analyze.mutateAsync(v);
-      setNote(r.cached ? "Nothing has changed since the last interpretation." : "Interpretation updated.");
+      if (r.cached) setNote("Nothing has changed since the last interpretation.");
+      else started.current = true;
     } finally { analysing.current = false; }
   });
 
@@ -97,7 +109,7 @@ export function CharacterEditor({ twin, character, consentGranted, provider, mod
     : null;
 
   const status = dirty ? "You have unsaved changes" : STATUS[character.status];
-  const failureNote = character.failure && !dirty && consentGranted ? failureText(character.failure) : null;
+  const failureNote = character.failure && !dirty && consentGranted && !running ? failureText(character.failure) : null;
 
   return (
     <div>
@@ -127,7 +139,9 @@ export function CharacterEditor({ twin, character, consentGranted, provider, mod
 
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
         <p role="status" aria-live="polite" className="text-sm text-muted">
-          {analyze.isPending ? (provider.id === "ollama" ? "Reading your description with the local model… this can take a minute or two." : "Reading your description…") : save.isPending ? "Saving…" : note ?? status}
+          {analyze.isPending || running
+            ? `${provider.id === "ollama" ? "Reading your description with the local model" : "Reading your description"}… ${elapsed ? `${elapsed} so far. ` : ""}${provider.id === "ollama" ? "A local model can take several minutes; you can leave this page and the result will still be saved." : ""}`
+            : save.isPending ? "Saving…" : note ?? status}
         </p>
         <div className="flex flex-wrap gap-2">
           {mode === "studio" && (
@@ -135,7 +149,7 @@ export function CharacterEditor({ twin, character, consentGranted, provider, mod
               Save description
             </Button>
           )}
-          <Button disabled={analyseDisabled} loading={analyze.isPending} onClick={onAnalyze}>
+          <Button disabled={analyseDisabled} loading={analyze.isPending || running} onClick={onAnalyze}>
             {character.profile ? "Update the interpretation" : "Understand this character"}
           </Button>
         </div>
@@ -198,6 +212,19 @@ export function CharacterEditor({ twin, character, consentGranted, provider, mod
       )}
     </div>
   );
+}
+
+/** Seconds since `startedAt` as "1m 05s", re-read every second. Real elapsed time only; never a fake progress bar. */
+function useElapsed(startedAt: string | null): string | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!startedAt) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [startedAt]);
+  if (!startedAt) return null;
+  const secs = Math.max(0, Math.round((now - Date.parse(startedAt)) / 1000));
+  return secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${String(secs % 60).padStart(2, "0")}s`;
 }
 
 const providerName = (p: string) => ({ nvidia: "NVIDIA", ollama: "Ollama (local model)", openai: "OpenAI", mock: "the sample generator" } as Record<string, string>)[p] ?? p;

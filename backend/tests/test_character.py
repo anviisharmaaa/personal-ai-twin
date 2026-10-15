@@ -24,6 +24,7 @@ from app.config import get_settings
 from app.main import app
 from tests.conftest import auth
 from tests.fake_supabase import FakeSupabase
+from tests.helpers import analyze
 
 CONSENT = "2026-10-v3-none"  # tests run with AI_PROVIDER unset; the version is provider-specific
 TEXT = "She is warm and teasing with close friends, but quiet and careful around people she has just met."
@@ -106,7 +107,7 @@ def test_description_is_bounded_and_strict(client: TestClient) -> None:
 def test_requires_a_twin(client: TestClient, analyzer: FakeAnalyzer) -> None:
     h = auth("alice")
     assert save(client, h, TEXT, 0).status_code == 409
-    assert client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h).status_code == 409
+    assert analyze(client, h, 1).status_code == 409
 
 
 def test_auth_required(client: TestClient, analyzer: FakeAnalyzer) -> None:
@@ -117,14 +118,14 @@ def test_auth_required(client: TestClient, analyzer: FakeAnalyzer) -> None:
 def test_analysis_blocked_without_consent_and_after_withdrawal(client: TestClient, analyzer: FakeAnalyzer) -> None:
     h = setup_twin(client, consent=False)
     save(client, h, TEXT, 0)
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h)
+    r = analyze(client, h, 1)
     assert r.status_code == 403 and r.json()["detail"]["code"] == "consent_required"
     assert analyzer.calls == 0
     client.post("/api/v1/consents/ai-processing", json={"version": CONSENT}, headers=h)
-    assert client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h).status_code == 200
+    assert analyze(client, h, 1).status_code == 200
     client.delete("/api/v1/consents/ai-processing", headers=h)
     save(client, h, TEXT + " Changed.", 1)
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 2}, headers=h)
+    r = analyze(client, h, 2)
     assert r.status_code == 403 and analyzer.calls == 1  # withdrawal respected; nothing sent
 
 
@@ -132,7 +133,7 @@ def test_missing_configuration_is_explicit_not_faked(client: TestClient, analyze
     h = setup_twin(client)
     save(client, h, TEXT, 0)
     analyzer.is_configured = False
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h)
+    r = analyze(client, h, 1)
     assert r.status_code == 503 and r.json()["detail"]["code"] == "not_configured"
     assert client.get("/api/v1/me", headers=h).json()["character"]["profile"] is None
 
@@ -140,10 +141,10 @@ def test_missing_configuration_is_explicit_not_faked(client: TestClient, analyze
 def test_input_validation(client: TestClient, analyzer: FakeAnalyzer) -> None:
     h = setup_twin(client)
     save(client, h, "Too short.", 0)
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h)
+    r = analyze(client, h, 1)
     assert r.status_code == 422 and r.json()["detail"]["code"] == "too_short"
     save(client, h, TEXT, 1)
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h)
+    r = analyze(client, h, 1)
     assert r.status_code == 409 and r.json()["detail"]["code"] == "stale_version"
     assert analyzer.calls == 0
 
@@ -151,11 +152,11 @@ def test_input_validation(client: TestClient, analyzer: FakeAnalyzer) -> None:
 def test_analyse_cache_regenerate_and_outdated(client: TestClient, analyzer: FakeAnalyzer, fake: FakeSupabase) -> None:
     h = setup_twin(client)
     save(client, h, TEXT, 0)
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h).json()
+    r = analyze(client, h, 1).json()
     assert r["cached"] is False and r["character"]["status"] == "current"
     assert r["character"]["profile"]["summary"].startswith("Warm") and analyzer.seen == [TEXT]
     # Same text again: served from storage, the model is not called a second time.
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h).json()
+    r = analyze(client, h, 1).json()
     assert r["cached"] is True and analyzer.calls == 1
     # Editing makes the stored profile outdated but keeps it, and the original text is untouched.
     out = save(client, h, TEXT + " She hates being rushed.", 1).json()["character"]
@@ -163,7 +164,7 @@ def test_analyse_cache_regenerate_and_outdated(client: TestClient, analyzer: Fak
     twin = [t for t in fake.tables["twins"] if t["owner_id"] == "alice"][0]
     assert twin["character_description"].endswith("rushed.")
     # Regenerating produces a profile for the latest version.
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 2}, headers=h).json()
+    r = analyze(client, h, 2).json()
     assert r["character"]["status"] == "current" and r["character"]["profile_version"] == 2 and analyzer.calls == 2
     # Usage ledger holds numbers only, never content.
     usage = fake.tables["ai_usage"]
@@ -174,17 +175,17 @@ def test_analyse_cache_regenerate_and_outdated(client: TestClient, analyzer: Fak
 def test_failure_keeps_last_good_profile(client: TestClient, analyzer: FakeAnalyzer) -> None:
     h = setup_twin(client)
     save(client, h, TEXT, 0)
-    client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h)
+    analyze(client, h, 1)
     save(client, h, TEXT + " Extra detail here.", 1)
     analyzer.error = AnalysisError("timeout", "The AI took too long to respond. Please try again.", 504)
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 2}, headers=h)
+    r = analyze(client, h, 2)
     assert r.status_code == 504 and r.json()["detail"]["code"] == "timeout"
     c = client.get("/api/v1/me", headers=h).json()["character"]
     assert c["status"] == "outdated" and c["profile"]["summary"] and c["profile_version"] == 1
     assert c["failure"] == "timeout"
     # A later success clears the failure.
     analyzer.error = None
-    c = client.post("/api/v1/twin/character/analyze", json={"version": 2}, headers=h).json()["character"]
+    c = analyze(client, h, 2).json()["character"]
     assert c["status"] == "current" and c["failure"] is None
 
 
@@ -192,7 +193,7 @@ def test_failure_with_no_prior_profile(client: TestClient, analyzer: FakeAnalyze
     h = setup_twin(client)
     save(client, h, TEXT, 0)
     analyzer.error = AnalysisError("malformed_response", "bad", 502)
-    assert client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h).status_code == 502
+    assert analyze(client, h, 1).status_code == 502
     c = client.get("/api/v1/me", headers=h).json()["character"]
     assert c["status"] == "not_analysed" and c["profile"] is None and c["failure"] == "malformed_response"
 
@@ -203,14 +204,14 @@ def test_in_flight_and_daily_limit(client: TestClient, analyzer: FakeAnalyzer, f
     save(client, h, TEXT, 0)
     twin_id = [t for t in fake.tables["twins"] if t["owner_id"] == "alice"][0]["id"]
     _in_flight.add(twin_id)
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h)
+    r = analyze(client, h, 1)
     assert r.status_code == 409 and r.json()["detail"]["code"] == "in_progress" and analyzer.calls == 0
     _in_flight.clear()
     monkeypatch.setenv("ANALYSIS_DAILY_LIMIT", "1")
     get_settings.cache_clear()
-    assert client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h).status_code == 200
+    assert analyze(client, h, 1).status_code == 200
     save(client, h, TEXT + " Edited.", 1)
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 2}, headers=h)
+    r = analyze(client, h, 2)
     assert r.status_code == 429 and r.json()["detail"]["code"] == "daily_limit" and analyzer.calls == 1
 
 
@@ -219,14 +220,14 @@ def test_kill_switch(client: TestClient, analyzer: FakeAnalyzer, monkeypatch: py
     save(client, h, TEXT, 0)
     monkeypatch.setenv("AI_ENABLED", "false")
     get_settings.cache_clear()
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h)
+    r = analyze(client, h, 1)
     assert r.status_code == 503 and r.json()["detail"]["code"] == "ai_disabled" and analyzer.calls == 0
 
 
 def test_users_cannot_see_each_others_characters(client: TestClient, analyzer: FakeAnalyzer) -> None:
     a, b = setup_twin(client, "alice"), setup_twin(client, "bob")
     save(client, a, TEXT, 0)
-    client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=a)
+    analyze(client, a, 1)
     cb = client.get("/api/v1/me", headers=b).json()
     assert cb["twin"]["character_description"] == "" and cb["character"]["profile"] is None
 
@@ -307,11 +308,11 @@ def test_old_consent_version_must_be_reaccepted(client: TestClient, analyzer: Fa
                                     "granted_at": "2026-10-01T00:00:00Z", "withdrawn_at": None})
     save(client, h, TEXT, 0)
     assert client.get("/api/v1/me", headers=h).json()["ai_consent"]["granted"] is False
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h)
+    r = analyze(client, h, 1)
     assert r.status_code == 403 and analyzer.calls == 0
     assert client.post("/api/v1/consents/ai-processing", json={"version": CONSENT}, headers=h).status_code == 201
     assert client.get("/api/v1/me", headers=h).json()["ai_consent"]["granted"] is True
-    assert client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h).status_code == 200
+    assert analyze(client, h, 1).status_code == 200
 
 
 def test_ready_reports_character_model_and_warns_about_the_old_name(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -342,3 +343,49 @@ async def test_provider_error_detail_is_captured_for_operators_but_not_the_user_
     with pytest.raises(AnalysisError) as e:
         await provider(handler).analyze("hello")
     assert "max_completion_tokens" in (e.value.detail or "") and "max_completion_tokens" not in e.value.message
+
+
+# ---- long-running analysis lifecycle (the request returns at once; the page polls /me) ------------------------------
+
+def test_analysis_returns_202_immediately_then_me_shows_the_finished_profile(
+        client: TestClient, analyzer: FakeAnalyzer) -> None:
+    h = setup_twin(client)
+    save(client, h, TEXT, 0)
+    r = client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h)
+    assert r.status_code == 202
+    assert r.json()["character"]["analysis"]["state"] == "running" and r.json()["character"]["profile"] is None
+    c = client.get("/api/v1/me", headers=h).json()["character"]
+    assert c["analysis"] == {"state": "idle", "started_at": None} and c["status"] == "current" and c["profile"]
+
+
+def test_me_reports_running_honestly_and_a_second_request_is_refused(
+        client: TestClient, analyzer: FakeAnalyzer, fake: FakeSupabase) -> None:
+    h = setup_twin(client)
+    save(client, h, TEXT, 0)
+    twin_id = [t for t in fake.tables["twins"] if t["owner_id"] == "alice"][0]["id"]
+    _in_flight.add(twin_id)
+    a = client.get("/api/v1/me", headers=h).json()["character"]["analysis"]
+    assert a["state"] == "running" and a["started_at"]
+    assert client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h).status_code == 409
+    _in_flight.clear()
+    assert client.get("/api/v1/me", headers=h).json()["character"]["analysis"]["state"] == "idle"
+
+
+def test_an_unexpected_crash_in_the_job_is_recorded_and_never_leaves_it_running(
+        client: TestClient, analyzer: FakeAnalyzer, caplog: pytest.LogCaptureFixture) -> None:
+    h = setup_twin(client)
+    save(client, h, TEXT, 0)
+    assert analyze(client, h, 1).status_code == 200
+    before = client.get("/api/v1/me", headers=h).json()["character"]["profile"]
+    save(client, h, TEXT + " Edited.", 1)
+
+    async def boom(_: str) -> object:
+        raise RuntimeError("something private " + TEXT[:30])
+
+    analyzer.analyze = boom  # type: ignore[method-assign,assignment]
+    r = analyze(client, h, 2)
+    assert r.status_code == 502 and r.json()["detail"]["code"] == "internal_error"
+    logged = " ".join(rec.getMessage() + str(rec.exc_info) for rec in caplog.records)
+    assert "analysis_crashed" in logged and "something private" not in logged and TEXT[:30] not in logged
+    c = client.get("/api/v1/me", headers=h).json()["character"]
+    assert c["analysis"]["state"] == "idle" and c["profile"] == before and c["status"] == "outdated"

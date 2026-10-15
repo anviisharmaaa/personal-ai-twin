@@ -123,3 +123,24 @@ Nothing here has been run by Claude: the cloud workspace cannot reach your Ollam
    says which stage rejects each. Set `OLLAMA_JSON_MODE` / `OLLAMA_REASONING_EFFORT` to the first working shape.
 3. "Consent needed" after switching provider is expected: an agreement is tied to the provider (`...-nvidia` does not
    cover `...-ollama`). Agree again in Settings; a stale failure is hidden until you do.
+
+### 5b. Speed and where the model runs (synthetic text only)
+
+Evidence so far (from the development database's usage log): one successful `qwen3.5:9b` analysis took 297 s for
+about 1,100 output tokens, roughly 3.7 tokens/s, which is typical of CPU or partial-GPU execution.
+
+- `python -m scripts.ollama_bench` - model load time, then short / rich / long synthetic descriptions, tokens per
+  second, which pipeline stage accepted each, and from Ollama's `/api/ps` how much of the model is in GPU memory.
+- `python -m scripts.ollama_bench --model qwen3.5:4b` compares an INSTALLED smaller model. It never downloads. If you want
+  to compare, run `ollama pull qwen3.5:4b` yourself (3.3 GB) after approving the size; the 9B stays configured until you
+  change `OLLAMA_CHARACTER_MODEL`.
+- Analysis is now a background job: the request returns at once (202) and the page shows the server's real running
+  state with real elapsed time; `OLLAMA_TIMEOUT_SECONDS` (default 600) bounds the model call only. The job lives in the
+  server process: restarting the backend mid-analysis drops it (the page then returns to idle with the previous profile).
+
+## 6. Two-account isolation (live; stays UNVERIFIED until it prints ALL PASSED)
+
+Create two throw-away development accounts, confirm both emails, then in PowerShell (values are never printed):
+`$env:MADHUORA_TEST_A_EMAIL="..."; $env:MADHUORA_TEST_A_PASSWORD="..."; $env:MADHUORA_TEST_B_EMAIL="..."; $env:MADHUORA_TEST_B_PASSWORD="..."`
+then `python -m scripts.two_account_check` (backend running). Portrait privacy needs a real upload: the signed URL must
+work, and the bare storage path without a token must not.

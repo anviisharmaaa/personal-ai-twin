@@ -19,6 +19,7 @@ from app.config import get_settings
 from app.grounding import entry_count, ground, is_sparse, is_verbatim, sensitive_violations
 from app.main import app
 from app.providers import NvidiaAnalyzer
+from tests.helpers import analyze
 from tests.test_providers import start
 
 RICH = ("Meera is the one who remembers everyone's birthdays. She teases her closest friends constantly but goes "
@@ -257,14 +258,14 @@ def test_quality_failure_keeps_the_previous_profile_and_the_description(client: 
     h = start(client)
     good = nvidia(reply({"core_traits": [item("Warm with friends")]}))
     app.dependency_overrides[get_analyzer] = lambda: good
-    assert client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h).status_code == 200
+    assert analyze(client, h, 1).status_code == 200
     before = client.get("/api/v1/me", headers=h).json()["character"]["profile"]
 
     edited = "She is warm and teasing with close friends, but quiet and careful around people she has just met. Extra."
     client.put("/api/v1/twin/character", json={"description": edited, "base_version": 1}, headers=h)
     ungrounded = nvidia(reply({"context_tendencies": [ctx("A", "x", "made up one"), ctx("B", "y", "made up two")]}))
     app.dependency_overrides[get_analyzer] = lambda: ungrounded
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 2}, headers=h)
+    r = analyze(client, h, 2)
     assert r.status_code == 502 and r.json()["detail"]["code"] == "quality_failed"
 
     me = client.get("/api/v1/me", headers=h).json()

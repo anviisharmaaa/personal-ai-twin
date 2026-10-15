@@ -20,6 +20,7 @@ from app.grounding import ground
 from app.main import app
 from scripts.live_character_smoke import TIERS, checks, formatting_problems, residual_similar
 from tests.fake_supabase import FakeSupabase
+from tests.helpers import analyze
 from tests.test_grounding import CODE_MIXED, DEV, ISHA, RICH, ctx, item, nvidia, prof, reply
 from tests.test_providers import start
 
@@ -442,7 +443,7 @@ def test_saved_profile_and_api_responses_never_contain_raw_output_or_removed_ent
     model = nvidia(reply({"core_traits": [item(marker), item("Remembers birthdays")],
                           "relationships_and_social": [item(marker)]}))
     app.dependency_overrides[get_analyzer] = lambda: model
-    res = client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h)
+    res = analyze(client, h, 1)
     assert res.status_code == 200
     blob = json.dumps(fake.tables["character_profiles"]) + res.text + client.get("/api/v1/me", headers=h).text
     saved = fake.tables["character_profiles"][0]["profile"]

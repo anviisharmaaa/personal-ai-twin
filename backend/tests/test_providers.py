@@ -27,6 +27,7 @@ from app.providers import (
 )
 from tests.conftest import auth
 from tests.fake_supabase import FakeSupabase
+from tests.helpers import analyze
 
 TEXT = "She is warm and teasing with close friends, but quiet and careful around people she has just met."
 GOOD = {"summary": "Warm with friends, reserved with strangers.",
@@ -242,7 +243,7 @@ def start(client: TestClient, user: str = "alice") -> dict[str, str]:
 
 def test_mock_result_is_labelled_a_sample_in_the_api(client: TestClient, mock_mode: None) -> None:
     h = start(client)
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h)
+    r = analyze(client, h, 1)
     assert r.status_code == 200
     c = r.json()["character"]
     assert c["generated_by"] == {"provider": "mock", "model": "sample-fixture", "is_sample": True}
@@ -252,19 +253,19 @@ def test_mock_result_is_labelled_a_sample_in_the_api(client: TestClient, mock_mo
 def test_changing_provider_requires_new_consent_and_never_reuses_a_sample_profile(
         client: TestClient, mock_mode: None, monkeypatch: pytest.MonkeyPatch, fake: FakeSupabase) -> None:
     h = start(client)
-    client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h)
+    analyze(client, h, 1)
     # Switch the server to NVIDIA (not configured: no key). The old mock consent no longer counts.
     monkeypatch.setenv("AI_PROVIDER", "nvidia")
     get_settings.cache_clear()
     me = client.get("/api/v1/me", headers=h).json()
     assert me["ai_consent"]["granted"] is False and me["ai_consent"]["provider"]["id"] == "nvidia"
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h)
+    r = analyze(client, h, 1)
     assert r.status_code == 403 and r.json()["detail"]["code"] == "consent_required"
     # The sample profile is still there for review, still labelled as a sample.
     assert me["character"]["generated_by"]["is_sample"] is True
     # With consent but no key, we get an honest 503. We do NOT fall back to the mock or to OpenAI.
     client.post("/api/v1/consents/ai-processing", json={"version": consent_version(get_settings())}, headers=h)
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h)
+    r = analyze(client, h, 1)
     assert r.status_code == 503 and r.json()["detail"]["code"] == "not_configured"
     assert client.get("/api/v1/me", headers=h).json()["character"]["profile"]["summary"].startswith("SAMPLE ONLY")
 
@@ -364,14 +365,14 @@ def test_truncated_analysis_keeps_the_last_good_profile_and_the_users_text(clien
     get_settings.cache_clear()
     h = start(client)
     app.dependency_overrides[get_analyzer] = lambda: good
-    assert client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h).status_code == 200
+    assert analyze(client, h, 1).status_code == 200
     before = client.get("/api/v1/me", headers=h).json()["character"]["profile"]
     assert before["summary"].startswith("Warm")
 
     edited = TEXT + " She also hates being rushed."
     client.put("/api/v1/twin/character", json={"description": edited, "base_version": 1}, headers=h)
     app.dependency_overrides[get_analyzer] = lambda: cut
-    r = client.post("/api/v1/twin/character/analyze", json={"version": 2}, headers=h)
+    r = analyze(client, h, 2)
     assert r.status_code == 502 and r.json()["detail"]["code"] == "truncated"
 
     me = client.get("/api/v1/me", headers=h).json()

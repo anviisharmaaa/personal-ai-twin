@@ -102,6 +102,8 @@ export type CharacterState = {
   generated_by: { provider: string | null; model: string | null; is_sample: boolean } | null;
   /** Code of the most recent failed attempt, if it happened after the last good profile. */
   failure: string | null;
+  /** Real server state: "running" only while a generation is actually in progress (it can take minutes locally). */
+  analysis?: { state: "idle" | "running"; started_at: string | null };
 };
 
 export type ProviderInfo = {

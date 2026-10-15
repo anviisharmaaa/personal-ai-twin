@@ -5,7 +5,11 @@ import { config } from "../lib/config";
 export const ME_KEY = ["me"];
 
 export function useMe(enabled = true) {
-  return useQuery({ queryKey: ME_KEY, queryFn: () => api.get<Me>("/api/v1/me"), enabled, retry: 1 });
+  return useQuery({
+    queryKey: ME_KEY, queryFn: () => api.get<Me>("/api/v1/me"), enabled, retry: 1,
+    // While the server reports a generation in progress, ask again every 2 s. Stops by itself when it is idle.
+    refetchInterval: (q) => (q.state.data?.character?.analysis?.state === "running" ? 2000 : false),
+  });
 }
 
 /** Public readiness probe: tells the UI up front whether the server can run AI analysis. */
@@ -40,6 +44,7 @@ export const useSaveCharacter = () =>
       description: v.description, base_version: v.baseVersion,
     }),
   );
+/** Starts an analysis. The server answers at once (202) and keeps working; progress is read from /me. */
 export const useAnalyzeCharacter = () =>
   useRefreshingMutation((version: number) =>
     api.post<{ character: CharacterState; cached: boolean }>("/api/v1/twin/character/analyze", { version }),
