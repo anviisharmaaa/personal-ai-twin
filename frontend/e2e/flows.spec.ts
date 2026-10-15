@@ -374,6 +374,22 @@ test.describe("Character workspace (mocked backend and mocked analysis)", () => 
     await expect(page.getByRole("button", { name: "Save description" })).toBeEnabled();
   });
 
+  test("outdated consent plus an old failure: only the consent message shows; agreeing in Settings clears it", async ({ page }) => {
+    const be = withCharacter(false, { consent: false });
+    be.character.failure = "not_json";
+    await open(page, be);
+    await expect(page.getByText("AI processing consent is needed before Madhuora can read this.")).toBeVisible();
+    await expect(page.getByText(/valid JSON/)).toHaveCount(0);          // the stale failure is hidden while consent blocks
+    await page.getByRole("link", { name: "Settings" }).first().click();
+    await page.getByRole("button", { name: "Agree to AI processing" }).click();
+    await expect(page.getByRole("button", { name: "Withdraw consent" })).toBeVisible();
+    await page.goBack();
+    await page.getByRole("tab", { name: "Character" }).click();
+    await expect(page.getByText("AI processing consent is needed")).toHaveCount(0);
+    await expect(page.getByText(/valid JSON/)).toBeVisible();           // the failure is now shown with its specific reason
+    await expect(page.getByLabel("Describe the person")).toHaveValue(DESCRIPTION);
+  });
+
   test("when the server has no AI configured the UI says so instead of faking a result", async ({ page }) => {
     const be = withCharacter(false, { aiConfigured: false });
     await open(page, be);

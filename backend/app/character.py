@@ -227,12 +227,25 @@ def _unwrap(raw: str) -> str:
 
 
 def parse_profile(raw: str) -> CharacterProfile:
+    """Parse the model's text into the strict schema. Each failure gets its own code, and a privacy-safe detail
+    (character position or field paths and rule names only, never any text the model or the user wrote)."""
+    text = _unwrap(raw)
+    if not text.strip():
+        raise AnalysisError("empty_response", "The AI returned an empty answer.", 502, "content empty after unwrap")
     try:
-        return CharacterProfile.model_validate(json.loads(_unwrap(raw)))
-    except (json.JSONDecodeError, ValidationError, TypeError) as exc:
-        raise AnalysisError(
-            "malformed_response", "The AI returned something we couldn't use. Please try again."
-        ) from exc
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise AnalysisError("not_json", "The AI's answer was not valid JSON.", 502,
+                            f"json error at char {exc.pos} of {len(text)}; starts_with_brace={text.lstrip()[:1] == '{'}"
+                            ) from exc
+    except TypeError as exc:
+        raise AnalysisError("not_json", "The AI's answer was not valid JSON.", 502) from exc
+    try:
+        return CharacterProfile.model_validate(data)
+    except ValidationError as exc:
+        issues = sorted({f"{'.'.join(str(x) for x in e['loc'][:3])}:{e['type']}" for e in exc.errors()})[:8]
+        raise AnalysisError("schema_invalid", "The AI's answer did not match the required structure.", 502,
+                            f"{exc.error_count()} schema issue(s): " + ", ".join(issues)) from exc
 
 
 def _provider_detail(res: httpx.Response) -> str | None:
@@ -346,8 +359,11 @@ class OpenAIAnalyzer:
                 raise AnalysisError("truncated", "The AI's answer was cut off. Please try again.", 502,
                                     f"usage={data.get('usage')}")
             content = choice["message"].get("content")
-            if not isinstance(content, str) or choice["message"].get("refusal"):
+            if choice["message"].get("refusal"):
                 raise AnalysisError("refused", "The AI declined to analyse this description.", 502)
+            if not isinstance(content, str):
+                raise AnalysisError("empty_response", "The AI returned an empty answer.", 502,
+                                    f"finish={choice.get('finish_reason')}; no text content")
         except (KeyError, IndexError, TypeError, AttributeError) as exc:
             raise AnalysisError("malformed_response", "The AI returned something we couldn't use.", 502) from exc
         raw = parse_profile(content)

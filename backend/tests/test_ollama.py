@@ -202,7 +202,7 @@ async def test_truncated_and_malformed_local_output_is_rejected_like_every_provi
                                               "usage": {"prompt_tokens": 4000}})
     with pytest.raises(AnalysisError) as m:
         await ollama(bad).analyze(RICH)
-    assert m.value.code == "malformed_response"
+    assert m.value.code in ("not_json", "schema_invalid")
 
 
 # ---- the shared pipeline still protects the saved profile -------------------------------------------------------------
@@ -297,3 +297,77 @@ def test_ready_reports_ollama_and_warns_about_a_non_local_address(monkeypatch: p
     get_settings.cache_clear()
     body = TestClient(create_app()).get("/ready").json()
     assert body["configured"]["ai"] is False and any("OLLAMA_BASE_URL" in w for w in body["warnings"])
+
+
+# ---- diagnosing "the AI returned something unusable": each cause has its own code and a content-free detail ----------
+
+def chat(content: object, finish: str = "stop", **msg: object) -> httpx.Response:
+    return httpx.Response(200, json={"model": "qwen-test:9b", "choices": [
+        {"finish_reason": finish, "message": {"content": content, **msg}}], "usage": {"prompt_tokens": 4000, "completion_tokens": 50}})
+
+
+PRIVATE_TEXT = "Meera hides her anxiety behind jokes"  # stands in for private text the diagnostics must never contain
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(("response", "code"), [
+    (lambda: chat(""), "empty_response"),
+    (lambda: chat("<think>reasoning only</think>"), "empty_response"),
+    (lambda: chat(None, reasoning="all the answer ended up in a reasoning field"), "empty_response"),
+    (lambda: chat(f"Sure! Here is the profile: {PRIVATE_TEXT}"), "not_json"),
+    (lambda: chat(json.dumps({"summary": PRIVATE_TEXT, "unexpected": 1})), "schema_invalid"),
+    (lambda: chat(json.dumps({"summary": 7})), "schema_invalid"),
+])
+async def test_each_unusable_answer_has_its_own_code_and_a_content_free_detail(response, code) -> None:  # type: ignore[no-untyped-def]
+    a = ollama(lambda _: response())
+    with pytest.raises(AnalysisError) as e:
+        await a.analyze(RICH)
+    assert e.value.code == code
+    assert PRIVATE_TEXT not in (e.value.detail or "") and PRIVATE_TEXT not in e.value.message
+    assert RICH[:40] not in (e.value.detail or "")
+
+
+def test_a_failed_analysis_is_logged_without_any_text_and_the_description_and_profile_survive(
+        client: TestClient, ollama_mode: None, caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+
+    h = start(client)
+    app.dependency_overrides[get_analyzer] = lambda: ollama(lambda _: body_for({"core_traits": [item("Warm")]}))
+    assert client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h).status_code == 200
+    before = client.get("/api/v1/me", headers=h).json()["character"]["profile"]
+    client.put("/api/v1/twin/character", json={"description": RICH, "base_version": 1}, headers=h)
+    app.dependency_overrides[get_analyzer] = lambda: ollama(lambda _: chat(f"not json {PRIVATE_TEXT}"))
+    with caplog.at_level(logging.WARNING, logger="madhuora.character"):
+        r = client.post("/api/v1/twin/character/analyze", json={"version": 2}, headers=h)
+    assert r.status_code == 502 and r.json()["detail"]["code"] == "not_json"
+    logged = " ".join(rec.getMessage() for rec in caplog.records)
+    assert "code=not_json" in logged and "provider=ollama" in logged
+    assert PRIVATE_TEXT not in logged and RICH[:40] not in logged
+    me = client.get("/api/v1/me", headers=h).json()
+    assert me["character"]["profile"] == before and me["character"]["status"] == "outdated"
+    assert me["character"]["failure"] == "not_json" and me["twin"]["character_description"] == RICH
+
+
+def test_consent_given_for_another_provider_is_outdated_and_agreeing_again_unblocks_analysis(
+        client: TestClient, ollama_mode: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reported pair of messages: a consent from before the switch to Ollama, plus an old stored failure."""
+    monkeypatch.setenv("AI_PROVIDER", "nvidia")
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test")
+    monkeypatch.setenv("NVIDIA_CHARACTER_MODEL", "m")
+    get_settings.cache_clear()
+    h = start(client)                                       # agrees to the NVIDIA wording
+    app.dependency_overrides[get_analyzer] = lambda: ollama(lambda _: chat("garbage"))
+    monkeypatch.setenv("AI_PROVIDER", "ollama")
+    get_settings.cache_clear()
+    me = client.get("/api/v1/me", headers=h).json()
+    c = me["ai_consent"]
+    assert c["granted"] is False and c["version"] == "2026-10-v3-nvidia" and c["current_version"] == "2026-10-v3-ollama"
+    r = client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h)
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "consent_required"
+    # The old wording cannot be agreed to under the new provider; the new one can, and /me reflects it at once.
+    assert client.post("/api/v1/consents/ai-processing", json={"version": "2026-10-v3-nvidia"}, headers=h).status_code == 409
+    assert client.post("/api/v1/consents/ai-processing", json={"version": c["current_version"]}, headers=h).status_code == 201
+    c2 = client.get("/api/v1/me", headers=h).json()["ai_consent"]
+    assert c2["granted"] is True and c2["version"] == "2026-10-v3-ollama"
+    r = client.post("/api/v1/twin/character/analyze", json={"version": 1}, headers=h)
+    assert r.status_code == 502 and r.json()["detail"]["code"] == "not_json"   # now it reaches the model (and fails honestly)

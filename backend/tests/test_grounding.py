@@ -236,7 +236,7 @@ async def test_malformed_model_output_is_rejected(content: str) -> None:
     h = lambda _: httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"content": content}}]})  # noqa: E731
     with pytest.raises(AnalysisError) as e:
         await nvidia(h).analyze(RICH)
-    assert e.value.code == "malformed_response"
+    assert e.value.code in ("not_json", "schema_invalid")
 
 
 @pytest.mark.anyio

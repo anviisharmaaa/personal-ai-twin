@@ -142,7 +142,7 @@ async def test_nvidia_rejects_malformed_output_without_repairing_or_retrying(con
 
     with pytest.raises(AnalysisError) as e:
         await nvidia(handler).analyze(TEXT)
-    assert e.value.code == "malformed_response" and calls == 1
+    assert e.value.code in ("not_json", "schema_invalid") and calls == 1
 
 
 @pytest.mark.anyio

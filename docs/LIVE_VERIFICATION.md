@@ -113,3 +113,13 @@ Nothing here has been run by Claude: the cloud workspace cannot reach your Ollam
    Your own text, locally only: `python -m scripts.live_character_smoke --text-file mine.txt` (output in git-ignored `scripts/out/`).
 7. Browser checklist = section 2, but with the Ollama notice (local processing, Supabase still stores data) and these descriptions: one short, one detailed, one with contrasting behaviours. Also stop Ollama and confirm the "local model unavailable" error keeps the previous profile, and switch provider to confirm consent re-review.
 8. Unverified until you run it: `/v1` acceptance of `response_format` json_schema and `reasoning_effort` for your model (if rejected, set `OLLAMA_JSON_MODE=prompt`), speed, and profile quality.
+
+### 5a. If an Ollama analysis fails ("empty / not valid JSON / wrong structure / didn't pass checks")
+
+1. Backend log line (no text, no keys): `analysis_failed code=<code> provider=ollama detail=<positions, field paths, counts>`.
+   Codes: `local_unavailable`, `local_model_missing`, `timeout`, `truncated`, `empty_response`, `not_json`,
+   `schema_invalid`, `quality_failed` (grounding rule named in `detail`), `context_too_small`, `consent_required`.
+2. `python -m scripts.ollama_probe` tries the four request shapes against YOUR model with the fictional text only and
+   says which stage rejects each. Set `OLLAMA_JSON_MODE` / `OLLAMA_REASONING_EFFORT` to the first working shape.
+3. "Consent needed" after switching provider is expected: an agreement is tied to the provider (`...-nvidia` does not
+   cover `...-ollama`). Agree again in Settings; a stale failure is hidden until you do.

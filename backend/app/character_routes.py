@@ -144,6 +144,9 @@ async def analyze_character(
         try:
             result = await analyzer.analyze(description)
         except AnalysisError as exc:
+            # Privacy-safe diagnostics only: code, provider and the validator's own detail (positions, field paths,
+            # rule names, counts). Never the description, the model's text, a profile or any key.
+            log.warning("analysis_failed code=%s provider=%s detail=%s", exc.code, provider, exc.detail or "-")
             await _record_usage(rest, user, False, provider_model(settings), None, None, None)
             await _record_failure(rest, user, twin["id"], exc.code, row)
             raise _err(exc.code, exc.message, exc.status_code) from exc

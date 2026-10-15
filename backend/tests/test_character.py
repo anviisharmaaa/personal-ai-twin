@@ -261,8 +261,8 @@ async def test_adapter_request_shape_and_parse() -> None:
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(("make", "code"), [
-    (lambda: ok_response("not json"), "malformed_response"),
-    (lambda: ok_response(json.dumps({"summary": "x", "extra": 1})), "malformed_response"),
+    (lambda: ok_response("not json"), "not_json"),
+    (lambda: ok_response(json.dumps({"summary": "x", "extra": 1})), "schema_invalid"),
     (lambda: ok_response("{}", finish="length"), "truncated"),
     (lambda: httpx.Response(429), "rate_limited"),
     (lambda: httpx.Response(401), "provider_auth"),

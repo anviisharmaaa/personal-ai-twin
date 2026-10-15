@@ -91,13 +91,13 @@ export function CharacterEditor({ twin, character, consentGranted, provider, mod
   const analyseDisabled =
     busy || tooShort || over > 0 || !consentGranted || aiOff || (character.status === "current" && !dirty);
   const why =
-    !consentGranted ? "AI processing consent is needed before Madhuora can read this."
+    !consentGranted ? `AI processing consent is needed before Madhuora can read this. Agree to the current provider (${providerName(provider.id)}) in Settings; an agreement made for another provider doesn’t carry over.`
     : aiOff ? "AI analysis isn’t set up on this server yet. Your description is still saved."
     : tooShort ? `Write at least ${character.min_chars} characters so there is something to interpret.`
     : null;
 
   const status = dirty ? "You have unsaved changes" : STATUS[character.status];
-  const failureNote = character.failure && !dirty ? failureText(character.failure) : null;
+  const failureNote = character.failure && !dirty && consentGranted ? failureText(character.failure) : null;
 
   return (
     <div>
@@ -207,7 +207,10 @@ function failureText(code: string): string {
   const m: Record<string, string> = {
     timeout: `${base}: the AI took too long. Your previous interpretation is unchanged.`,
     rate_limited: `${base}: the AI service was busy. Try again shortly.`,
-    malformed_response: `${base}: the AI returned something unusable. Try again.`,
+    malformed_response: `${base}: the AI’s reply couldn’t be read. Try again.`,
+    empty_response: `${base}: the model sent back an empty answer. Try again; if it keeps happening the model or its reasoning setting needs checking by whoever runs the server.`,
+    not_json: `${base}: the model didn’t reply in the required format (it wasn’t valid JSON). Try again. Your previous interpretation is unchanged.`,
+    schema_invalid: `${base}: the model’s reply didn’t match the required structure. Try again. Your previous interpretation is unchanged.`,
     truncated: `${base}: the answer was cut off. Try again.`,
     refused: `${base}: the AI declined this description.`,
     quality_failed: `${base}: the interpretation didn’t match your description closely enough to be saved. Your previous interpretation is unchanged. You can try again.`,
