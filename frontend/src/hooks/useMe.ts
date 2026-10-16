@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type CharacterState, type Gender, type Me, type Twin } from "../lib/api";
+import { api, type CharacterState, type Gender, type UserIdentityRecord, type Me, type Twin } from "../lib/api";
 import { config } from "../lib/config";
 import { useCharacterScope, withCharacter } from "./characterScope";
 
@@ -78,7 +78,7 @@ export const useAnalyzeCharacter = () => {
 export const useCompleteStep = () =>
   useRefreshingMutation((step: string) => api.post(`/api/v1/onboarding/steps/${step}/complete`));
 export const useSaveProfile = () =>
-  useRefreshingMutation((b: { display_name?: string; timezone?: string }) => api.put("/api/v1/me/profile", b));
+  useRefreshingMutation((b: { display_name?: string; timezone?: string } & Partial<UserIdentityRecord>) => api.put("/api/v1/me/profile", b));
 export const useUploadPortrait = () => {
   const id = useCharacterScope();
   return useRefreshingMutation((v: { blob: Blob; other: boolean; permission: boolean }) => {

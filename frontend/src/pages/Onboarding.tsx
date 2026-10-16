@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Icon } from "../components/Icon";
+import { fromRecord, sameValue, toPayload, UserIdentityFields, type UserIdentityValue } from "../components/UserIdentityFields";
 import { PortraitEditor } from "../components/PortraitEditor";
 import { CharacterEditor } from "../components/CharacterEditor";
 import { Button, Card, Chip, Notice, Skeleton, TextArea, TextField } from "../components/ui";
@@ -118,6 +119,8 @@ function Identity({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState(twin?.name ?? "");
   const [display, setDisplay] = useState(me.data!.profile?.display_name ?? "");
   const [about, setAbout] = useState(twin?.about ?? "");
+  const savedIdentity = fromRecord(me.data!.profile);
+  const [ident, setIdent] = useState<UserIdentityValue>(savedIdentity);
   const saveTwin = useSaveTwin();
   const saveProfile = useSaveProfile();
   const complete = useCompleteStep();
@@ -130,7 +133,11 @@ function Identity({ onDone }: { onDone: () => void }) {
     setErr(null);
     try {
       await saveTwin.mutateAsync({ name: name.trim(), about: about.trim() });
-      if (display.trim() !== (me.data!.profile?.display_name ?? "")) await saveProfile.mutateAsync({ display_name: display.trim() });
+      const profilePatch = {
+        ...(display.trim() !== (me.data!.profile?.display_name ?? "") ? { display_name: display.trim() } : {}),
+        ...(sameValue(ident, savedIdentity) ? {} : toPayload(ident)),   // only when they chose to change it
+      };
+      if (Object.keys(profilePatch).length) await saveProfile.mutateAsync(profilePatch);
       await complete.mutateAsync("identity");
       onDone();
     } catch (e) { setErr(msg(e)); }
@@ -145,6 +152,11 @@ function Identity({ onDone }: { onDone: () => void }) {
         <TextArea label="A few words about the twin (optional)" value={about} onChange={(e) => setAbout(e.target.value)} maxLength={2000}
           hint={`${about.length}/2000 · Shown on your dashboard. Keep anything private out of here.`} />
       </div>
+      <details className="mt-6 rounded-[10px] border border-border p-4">
+        <summary className="cursor-pointer text-sm font-medium">Optional: how should characters address you?</summary>
+        <p className="mb-4 mt-2 text-sm text-muted">Skip this if you like; you can change it any time in Settings. It’s your own choice and is never guessed.</p>
+        <UserIdentityFields value={ident} onChange={setIdent} />
+      </details>
       {err && <div className="mt-4"><Notice tone="error">{err}</Notice></div>}
       <div className="mt-6 flex justify-end"><Button size="lg" onClick={go} loading={saveTwin.isPending || complete.isPending}>Save and continue</Button></div>
     </Card>

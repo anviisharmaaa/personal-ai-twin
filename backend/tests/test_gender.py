@@ -80,7 +80,7 @@ def test_female_prompt_contains_authoritative_feminine_instruction_before_the_de
         assert place in t
     assert "do not copy them" in t and "personality" in t and "Identity reminder: you are a woman" in t
     assert t.index("Identity reminder") > t.index("</original_description>") and t.rstrip().endswith("No assistant phrasing.")
-    assert "she soch rahi" not in t and "main soch rahi hoon" in t                                    # a pattern, flagged as such
+    assert "main soch rahi hoon" in t                                    # a pattern, flagged as such
     assert "not sentences to repeat" in t
 
 

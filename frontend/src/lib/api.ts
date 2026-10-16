@@ -128,9 +128,16 @@ export type ProviderInfo = {
   disclosure: string[];
 };
 
+export type UserGender = "woman" | "man" | "non_binary" | "other" | "prefer_not_to_say";
+export type AddressForm = "feminine" | "masculine" | "neutral";
+/** The signed-in user's OWN optional identity (their profile row). Not a character's gender. */
+export type UserIdentityRecord = {
+  user_gender: UserGender | null; user_gender_custom: string | null; user_pronouns: string | null; user_address_form: AddressForm | null;
+};
+
 export type Me = {
   user_id: string;
-  profile: { display_name: string | null; timezone: string } | null;
+  profile: ({ display_name: string | null; timezone: string } & Partial<UserIdentityRecord>) | null;
   twin: Twin | null;
   character: CharacterState | null;
   completed_steps: string[];

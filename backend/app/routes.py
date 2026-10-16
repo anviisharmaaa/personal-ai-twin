@@ -14,6 +14,7 @@ from app.providers import consent_version, provider_info
 from app.schemas import CharacterCreateIn, ConsentIn, OnboardingStep, ProfileIn, TwinIn
 from app.supabase_rest import SupabaseError, SupabaseRest, get_rest
 
+USER_IDENTITY_FIELDS = {"user_gender", "user_gender_custom", "user_pronouns", "user_address_form"}
 router = APIRouter(prefix="/api/v1")
 log = logging.getLogger("madhuora.api")
 
@@ -123,10 +124,25 @@ async def me(user: AuthUser = Depends(current_user), rest: SupabaseRest = Depend
 async def update_profile(
     body: ProfileIn, user: AuthUser = Depends(current_user), rest: SupabaseRest = Depends(get_rest)
 ) -> dict[str, Any]:
-    patch = body.model_dump(exclude_none=True)
+    sent = body.model_dump(exclude_unset=True)
+    # display_name/timezone cannot be cleared (as before); identity fields can (explicit null = not specified).
+    patch = {k: v for k, v in sent.items() if v is not None or k in USER_IDENTITY_FIELDS}
     if not patch:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Nothing to update.")
-    rows = await rest.update(user.token, "profiles", {"id": _eq(user.id)}, patch)
+    for k in ("user_gender_custom", "user_pronouns"):
+        if isinstance(patch.get(k), str):
+            patch[k] = " ".join(patch[k].split()) or None
+    if "user_gender" in patch and patch["user_gender"] != "other":
+        patch["user_gender_custom"] = None            # custom wording only belongs to "Other / custom"
+    try:
+        rows = await rest.update(user.token, "profiles", {"id": _eq(user.id)}, patch)
+    except SupabaseError as exc:
+        if exc.status_code == 400 and USER_IDENTITY_FIELDS & patch.keys():
+            log.warning("user_identity_columns_missing: apply migration 20261016100000_user_identity")
+            raise character_error("migration_required", "The database hasn't been upgraded to store this yet. Apply "
+                                  "the latest migration (20261016100000_user_identity) and try again.",
+                                  status.HTTP_503_SERVICE_UNAVAILABLE) from exc
+        raise
     if not rows:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Profile not found.")
     return rows[0]

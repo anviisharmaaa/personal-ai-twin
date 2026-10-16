@@ -34,6 +34,8 @@ type Character = { description: string; version: number; profile: object | null;
 export type Backend = {
   twin: Twin; steps: string[]; consent: boolean; calls: { method: string; path: string; body?: unknown }[];
   failTwinSave: boolean;
+  /** The signed-in user's own identity fields as the mocked profiles row holds them. */
+  userIdentity: Record<string, unknown>;
   character: Character;
   aiConfigured: boolean;
   /** Which provider the mocked server reports. "mock" returns a sample-labelled profile. */
@@ -47,7 +49,7 @@ export type Backend = {
 
 export function newBackend(init: Partial<Backend> = {}): Backend {
   return {
-    twin: null, steps: [], consent: false, calls: [], failTwinSave: false, aiConfigured: true, provider: "nvidia", analyze: "ok",
+    twin: null, steps: [], consent: false, calls: [], failTwinSave: false, userIdentity: {}, aiConfigured: true, provider: "nvidia", analyze: "ok",
     analyzeDelayMs: 0, character: { description: "", version: 0, profile: null, profileVersion: null, failure: null },
     ...init,
   };
@@ -116,11 +118,15 @@ export async function mockApp(page: Page, be: Backend, opts: { auth?: boolean; t
 
     if (path === "/api/v1/me") {
       return json({
-        user_id: "u1", profile: { display_name: "Anvi", timezone: "Asia/Calcutta" },
+        user_id: "u1", profile: { display_name: "Anvi", timezone: "Asia/Calcutta", user_gender: null, user_gender_custom: null, user_pronouns: null, user_address_form: null, ...be.userIdentity },
         twin: be.twin ? { ...be.twin, character_description: be.character.description, character_version: be.character.version } : null,
         character: be.twin ? view(be) : null, completed_steps: be.steps,
         ai_consent: { granted: be.consent, version: be.consent ? "2026-10-v3-x" : null, current_version: "2026-10-v3-x", provider: PROVIDERS[be.provider] },
       });
+    }
+    if (path === "/api/v1/me/profile" && req.method() === "PUT") {
+      be.userIdentity = { ...be.userIdentity, ...Object.fromEntries(Object.entries(body as object).filter(([k]) => k.startsWith("user_"))) };
+      return json({ id: "u1", display_name: "Anvi", timezone: "Asia/Calcutta", ...be.userIdentity });
     }
     if (path === "/ready") return json({ status: "ok", ai_provider: be.provider, configured: { supabase: true, ai: be.aiConfigured } });
     if (path === "/api/v1/twin/character" && req.method() === "PUT") {

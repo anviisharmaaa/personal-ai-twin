@@ -12,9 +12,18 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
+# Custom wording is shown to the model as quoted data, so it is limited to ordinary letters and punctuation.
+_CUSTOM = r"^[\w][\w .,'’/()\-]{0,39}$"
+
+
 class ProfileIn(_Strict):
     display_name: str | None = Field(default=None, max_length=80)
     timezone: str | None = Field(default=None, max_length=64)
+    # The USER's own identity (profiles row, owner-only). Explicit null clears a value; omitted leaves it alone.
+    user_gender: Literal["woman", "man", "non_binary", "other", "prefer_not_to_say"] | None = None
+    user_gender_custom: str | None = Field(default=None, max_length=40, pattern=_CUSTOM)
+    user_pronouns: str | None = Field(default=None, max_length=40, pattern=_CUSTOM)
+    user_address_form: Literal["feminine", "masculine", "neutral"] | None = None
 
 
 class Appearance(_Strict):

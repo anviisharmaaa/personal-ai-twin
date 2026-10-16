@@ -65,3 +65,27 @@
   Supabase SQL editor of the development project (or `supabase db push`). Until then, `POST /characters` answers
   503 `migration_required` with a clear message and the self-twin keeps working. After applying, record the version
   Supabase assigns here, and run `python -m scripts.live_multi_character_check` (LIVE_VERIFICATION.md §8).
+
+## User gender / pronouns (created 2026-10-16, NOT applied anywhere)
+
+| Local file | Status |
+|---|---|
+| `supabase/migrations/20261016100000_user_identity.sql` | **not applied** to any project by the build; apply it yourself |
+
+- Additive only: four nullable columns on `public.profiles` (`user_gender`, `user_gender_custom`, `user_pronouns`,
+  `user_address_form`) with check constraints (allowed values, 1-40 chars). No data is rewritten, nothing dropped; existing
+  rows stay NULL = "not specified". The existing owner-only `profiles_select` / `profiles_update` policies already cover the
+  new columns (`auth.uid() = id`), so no policy changes are needed.
+- Safe order: (1) apply to the **development** project first (`eqdlmlayfbehgtoswnhd`), never directly to the project marked
+  PRODUCTION; (2) verify with the SQL below; (3) run `python -m scripts.two_account_check`; (4) only then consider production,
+  after taking a backup.
+- Verify in the SQL editor:
+
+      select column_name, data_type, is_nullable from information_schema.columns
+       where table_schema='public' and table_name='profiles' and column_name like 'user\_%' order by 1;
+      -- expect 4 rows, all nullable text
+      select polname, polcmd from pg_policy where polrelid='public.profiles'::regclass;
+      -- expect the two existing owner-only policies (select, update); nothing new
+
+- Without the migration the app keeps working: chat treats the user as "not specified", and saving the preferences answers
+  `503 migration_required` naming this file instead of failing blindly.

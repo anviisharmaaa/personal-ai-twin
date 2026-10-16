@@ -10,6 +10,7 @@ Conditions (each repeated --reps times with different seeds):
   female             selected female
   female+bad-history selected female, earlier assistant turns in history use MASCULINE forms (adversarial)
   male               selected male
+  user matrix        6 character x user pairings; self-forms and user-forms are checked SEPARATELY
   switch-f-then-m    the same user message to a female and then a male character in separate conversations
   non-binary         selected non-binary with they/them (any gendered self-form is flagged as unsupported)
   unspecified        no gender, neutral description (any gendered self-form is flagged)
@@ -29,8 +30,8 @@ import httpx
 
 from app.chat import ChatMessage, OllamaChatProvider, ollama_native_base, system_prompt
 from app.config import get_settings
-from app.grammar_check import check_self_gender
-from app.identity import Identity
+from app.grammar_check import check_self_gender, check_user_form
+from app.identity import Identity, UserIdentity
 from app.providers import ollama_endpoint_ok
 
 KIRAN = ("Kiran is a sharp-tongued, affectionate friend in her late twenties. She teases people she loves, writes "
@@ -114,6 +115,35 @@ async def main() -> int:
         sw_bad += (not ra.ok) + (not rb.ok)
         print(f"  F: {a!r} [{'ok' if ra.ok else 'WRONG'}]\n  M: {b!r} [{'ok' if rb.ok else 'WRONG'}]")
     totals["switching"] = [2 * args.reps - sw_bad, sw_bad, 0]
+    # ---- who is who: the character's own identity AND the user's, checked separately -----------------------------------
+    print("\n== character x user (each reply is checked twice: forms about the CHARACTER and forms about the USER)")
+    U_MSGS = ["Kal raat maine tumhe call kiya tha, tumne uthaya nahi.", "Aaj bahut kaam tha, ab jaakar fursat mili.",
+              "Batao na, tum kal kya kar rahe the?", "Mujhe lagta hai tum mujhse kuch chhupa rahe ho."]
+    ucases: list[tuple[str, str, Identity, UserIdentity, str, str]] = [
+        ("F char -> male user", "Kiran", F, UserIdentity("man", "", "he/him", ""), "female", "male"),
+        ("F char -> female user", "Kiran", F, UserIdentity("woman", "", "she/her", ""), "female", "female"),
+        ("M char -> female user", "Arjun", M, UserIdentity("woman", "", "she/her", ""), "male", "female"),
+        ("M char -> male user", "Arjun", M, UserIdentity("man", "", "he/him", ""), "male", "male"),
+        ("F char -> non-binary user (neutral)", "Kiran", F, UserIdentity("non_binary", "", "they/them", "neutral"), "female", "neutral"),
+        ("F char -> unspecified user", "Kiran", F, UserIdentity(), "female", "neutral"),
+    ]
+    udescs = {"Kiran": KIRAN, "Arjun": ARJUN}
+    for label, name, cid_, uid_, exp_self, exp_user in ucases:
+        system = system_prompt(name, None, udescs[name], [], identity=cid_, user=uid_)
+        sb = ub = ev = 0
+        print(f"-- {label}")
+        for rep in range(args.reps):
+            for mi, msg in enumerate(U_MSGS):
+                text = await reply(base, prov, system, [], msg, 500 + rep * 10 + mi, T)
+                rs, ru = check_self_gender(text, exp_self), check_user_form(text, exp_user)
+                sb += not rs.ok
+                ub += not ru.ok
+                ev += bool(rs.marks or ru.marks)
+                if not (rs.ok and ru.ok) or rep == 0:
+                    flag = ("" if rs.ok else f"  WRONG-SELF {[m.form for m in rs.violations]}") + ("" if ru.ok else f"  WRONG-USER {[m.form for m in ru.violations]}")
+                    print(f"  {msg!r} -> {text!r}{flag}")
+        totals["user: " + label] = [args.reps * len(U_MSGS) - sb - ub, sb + ub, 0]
+        print(f"   self-reference errors={sb} user-reference errors={ub} replies with any gendered form={ev}\n")
     print("\nSUMMARY (pass / FAIL / no-evidence); a FAIL is a wrong gendered self-form in a sampled reply")
     for k, (ok, bad, none) in totals.items():
         print(f"  {k:>20}: {ok:>3} / {bad:>3} / {none:>3}")

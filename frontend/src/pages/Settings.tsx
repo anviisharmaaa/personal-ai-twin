@@ -4,6 +4,7 @@ import { useAuth } from "../auth/AuthProvider";
 import { useTheme, type ThemePref } from "../hooks/useTheme";
 import { useGrantConsent, useMe, useSaveProfile, useWithdrawConsent } from "../hooks/useMe";
 import { supabase } from "../lib/supabase";
+import { fromRecord, sameValue, toPayload, UserIdentityFields, type UserIdentityValue } from "../components/UserIdentityFields";
 
 const zones = (): string[] => {
   try { return (Intl as unknown as { supportedValuesOf: (k: string) => string[] }).supportedValuesOf("timeZone"); } catch { return ["UTC"]; }
@@ -19,6 +20,7 @@ export function Settings() {
     <div className="space-y-6">
       <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
       <ProfileCard />
+      <AboutYouCard />
       <Card>
         <h2 className="text-base font-semibold">Theme</h2>
         <div role="radiogroup" aria-label="Theme" className="mt-4 inline-flex gap-1 rounded-[10px] border border-border bg-surface-2 p-1">
@@ -69,6 +71,33 @@ function ProfileCard() {
       </div>
       <div className="mt-4 flex items-center gap-3">
         <Button onClick={go} loading={save.isPending}>Save profile</Button>
+        {msg && <span role="status" className={`text-sm ${msg.ok ? "text-success" : "text-danger"}`}>{msg.text}</span>}
+      </div>
+    </Card>
+  );
+}
+
+function AboutYouCard() {
+  const me = useMe();
+  const save = useSaveProfile();
+  const saved = fromRecord(me.data?.profile);
+  const [v, setV] = useState<UserIdentityValue>(saved);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const go = async () => {
+    setMsg(null);
+    try { await save.mutateAsync(toPayload(v)); setMsg({ ok: true, text: "Saved." }); }
+    catch (e) { setMsg({ ok: false, text: e instanceof Error ? e.message : "Couldn’t save." }); }
+  };
+  return (
+    <Card>
+      <h2 className="text-base font-semibold">About you</h2>
+      <p className="mt-1 text-sm text-muted">
+        Optional. Helps characters address you naturally (for example the right Hindi verb endings). It belongs to your account,
+        is never taken from your name or messages, and is separate from your characters’ own gender.
+      </p>
+      <div className="mt-4"><UserIdentityFields value={v} onChange={(n) => { setMsg(null); setV(n); }} /></div>
+      <div className="mt-4 flex items-center gap-3">
+        <Button onClick={go} loading={save.isPending} disabled={sameValue(v, saved)}>Save</Button>
         {msg && <span role="status" className={`text-sm ${msg.ok ? "text-success" : "text-danger"}`}>{msg.text}</span>}
       </div>
     </Card>

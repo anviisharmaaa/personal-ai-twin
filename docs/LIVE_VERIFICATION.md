@@ -225,3 +225,10 @@ Read the printed replies. Expect `legacy-female` (no identity block) to show the
 gendered self-form, which is fine. Then in the app: Twin Studio -> pick the character -> Identity -> Gender = Female ->
 Save changes; talk to her in Hinglish ("Tumhari yaad aa rahi hai.") and confirm feminine self-reference. Paste the
 script output back so it can be recorded; until then this is unverified against a real model.
+
+Update (user identity): the same script now also prints a "character x user" section. Each reply is checked twice:
+forms about the character (`WRONG-SELF`) and forms about the user (`WRONG-USER`). To exercise real data instead of the
+script's invented identities: apply `20261016100000_user_identity.sql` to the DEVELOPMENT project, set Settings -> About you
+(for example Woman / she/her), pick a Male character, say "Kal raat maine tumhe call kiya tha, tumne uthaya nahi." and check
+that his own forms are masculine ("main so gaya tha") and forms about you are feminine ("tum thak gayi ho"). Then change the
+setting to Man, send another message in the same chat, and confirm the forms about you change while his do not.

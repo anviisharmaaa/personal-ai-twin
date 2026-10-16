@@ -116,3 +116,63 @@ def check_self_gender(text: str, expected: str) -> Result:
     else:
         bad = marks
     return Result(not bad, expected, marks, bad)
+
+
+# ---- forms that refer to the USER (the addressee: tum / tu / aap) -------------------------------------------------------
+# Agreement with "tum/aap" is masculine in -a/-e ("tum thak gaye ho", "tum aaye the") and feminine in -i ("tum thak gayi ho").
+# Only a gender-marked participle/adjective whose nearest preceding subject pronoun is tum/tu/aap counts.
+
+_ADDRESSEE = {"tum", "tu", "tumne", "tune", "aap", "aapne"}
+_USER_PART = {
+    "raha": MASC, "rahe": MASC, "rahi": FEM, "gaya": MASC, "gaye": MASC, "gayi": FEM, "gai": FEM,
+    "aaya": MASC, "aaye": MASC, "aayi": FEM, "hua": MASC, "hue": MASC, "hui": FEM,
+    "thaka": MASC, "thake": MASC, "thaki": FEM, "akela": MASC, "akele": MASC, "akeli": FEM,
+    "soye": MASC, "soyi": FEM, "baithe": MASC, "baithi": FEM, "khoye": MASC, "khoyi": FEM,
+}
+_USER_AUX = {"tha": MASC, "the": MASC, "thi": FEM, "thin": FEM}
+_USER_COP = {"ho", "hai", "hain"}
+_USER_HAB = re.compile(r"^[a-z]{2,}(ta|te|ti)$")
+
+
+def user_marks(text: str) -> list[Mark]:
+    marks: list[Mark] = []
+    for clause in _CLAUSE_BREAK.split(text.lower()):
+        if not clause or not clause.strip():
+            continue
+        toks = _tokens(clause)
+        subj: str | None = None
+        at = -99
+        prev_part = False
+        for i, t in enumerate(toks):
+            if t in _ADDRESSEE:
+                subj, at, prev_part = "user", i, False
+                continue
+            if t in ("main", "mai", "wo", "woh", "vo", "voh", "ye", "yeh", "usne", "hum", "ham", "maine"):
+                subj, prev_part = "else", False
+                continue
+            nxt = toks[i + 1] if i + 1 < len(toks) else ""
+            g = None
+            if t in _USER_PART:
+                if subj == "user":
+                    g = _USER_PART[t]
+                prev_part = True
+            elif t in _USER_AUX:
+                if subj == "user" and (prev_part or i - at <= 2):
+                    g = _USER_AUX[t]
+                prev_part = False
+            elif _USER_HAB.match(t) and nxt in _USER_COP and subj == "user":
+                g = FEM if t.endswith("ti") else MASC
+                prev_part = False
+            else:
+                prev_part = False
+            if g:
+                marks.append(Mark(t, g, clause.strip()))
+    return marks
+
+
+def check_user_form(text: str, expected: str) -> Result:
+    """expected: 'female' or 'male' = the forms the character should use about the user; 'neutral' = none should be
+    asserted. Forms about the character itself (main ...) are ignored here and checked by check_self_gender."""
+    marks = tuple(user_marks(text))
+    bad = tuple(m for m in marks if m.gender != expected) if expected in (FEM, MASC) else marks
+    return Result(not bad, expected, marks, bad)

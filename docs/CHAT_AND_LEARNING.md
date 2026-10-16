@@ -261,3 +261,32 @@ unspecified and female->male switching. No live Ollama evaluation was run from t
 **Limitations:** the checker is word-level and conservative (misses some constructions, cannot tell quoted speech of
 another person; Urdu script coverage is partial); model compliance is probabilistic; very long histories of wrong forms
 can still pull a small model; the conflict heuristic only reads English pronouns in the description.
+
+## The user's own gender, pronouns and address preference
+
+**Separate from characters.** A character's gender lives in that character's `twins.appearance`; the USER's identity lives on
+the user's own `profiles` row (`user_gender` woman|man|non_binary|other|prefer_not_to_say, `user_gender_custom`,
+`user_pronouns`, `user_address_form` feminine|masculine|neutral). All optional; NULL = not specified; existing accounts are
+untouched. Needs migration `20261016100000_user_identity.sql` (additive, not applied by the build; see MIGRATIONS.md).
+
+**Where it is asked.** Settings -> "About you" (editable any time) and, optionally, a collapsed section of the onboarding
+identity step. It is never asked inside a conversation. Nothing is inferred from a name, email, portrait, description or
+chat, and an AI inference never overwrites an explicit choice (there is no inference code path).
+
+**Server path.** On every send, `conversation_routes` reads the user's profile row with the user's own token (RLS) and builds
+`UserIdentity`; the request body has no such field (extra fields are ignored; tests forge them). `system_prompt(...,
+identity=<character>, user=<user>)` adds a `<user_identity>` block right after `<character_identity>`, and the closing
+reminder states both. The block says the user is a different person from the character, applies only where grammar needs it
+(Hindi "tum thak gayi/gaye ho"), covers the whole reply, forbids stereotypes, and treats custom text as quoted data.
+Custom values are limited to 40 letters/spaces/basic punctuation (validated by the API, sanitised again before prompting).
+
+**How the form is chosen.** (1) an explicit `user_address_form`; else (2) a stated Woman -> feminine / Man -> masculine as the
+default; else (3) neutral wording that avoids gendered forms (never masculine by default). Pronouns are given to the model
+for English/third-person reference. If the user tells the character in chat how to address them, the prompt says to follow
+that for the conversation (not saved, not inferred).
+
+**Verification honesty.** Deterministic tests prove storage, ownership, forged fields, no cross-user leakage, switching, and
+the exact prompts sent to Ollama. They do not prove generated grammar. `scripts/gender_eval.py` now also runs a character x
+user matrix and checks forms about the character and forms about the user separately (`grammar_check.check_self_gender`
+vs `check_user_form`). No live Ollama run was possible from the build container. Limitations: the checker is
+word-level (e.g. "aap ... rahe hain" is treated as masculine plural), quoted speech is not separated, and models may slip.
