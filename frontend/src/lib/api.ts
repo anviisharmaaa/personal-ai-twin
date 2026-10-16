@@ -58,6 +58,14 @@ export const api = {
 };
 
 // ---- Types mirrored from the backend ----
+export type Gender = "female" | "male" | "non_binary" | "unspecified";
+export const GENDER_OPTIONS: { value: Gender; label: string; pronouns: string }[] = [
+  { value: "female", label: "Female", pronouns: "she/her" },
+  { value: "male", label: "Male", pronouns: "he/him" },
+  { value: "non_binary", label: "Non-binary", pronouns: "they/them" },
+  { value: "unspecified", label: "Not specified", pronouns: "" },
+];
+
 export type Twin = {
   id: string;
   name: string;
@@ -65,7 +73,7 @@ export type Twin = {
   /** The user's own words. The source of truth; the profile below is only an interpretation of it. */
   character_description: string;
   character_version: number;
-  appearance: { framing?: string; background?: string; lighting?: string; portrait_subject?: string };
+  appearance: { framing?: string; background?: string; lighting?: string; portrait_subject?: string; gender?: Gender; pronouns?: string };
   portrait_path: string | null;
   portrait_url: string | null;
   portrait_permission_confirmed: boolean;

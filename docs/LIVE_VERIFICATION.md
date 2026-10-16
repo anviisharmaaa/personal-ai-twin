@@ -212,3 +212,16 @@ Status today: mocked (backend, vitest, Playwright) and real-socket-with-stub-mod
    no repeated openers or catchphrases in every message, empathy before jokes when you say something sad, no "remember when"
    inventions, a plain honest answer to "are you an AI?", a real answer to a real question.
 3. If a cached follow-up fails with `context_too_small`, the probe prints a WARNING in section 4; tell me.
+
+## 11. Character gender in Hindi/Hinglish replies (user-run)
+
+Needs your Ollama running and `OLLAMA_CHARACTER_MODEL` set. No DB, no downloads, invented text only.
+
+    cd backend && source .venv/bin/activate   # or your venv
+    python -m scripts.gender_eval --reps 5
+
+Read the printed replies. Expect `legacy-female` (no identity block) to show the old masculine slips and `female`,
+`female+bad-history`, `male` and `switching` to have FAIL=0 (exit code 1 otherwise). `no-evidence` replies expressed no
+gendered self-form, which is fine. Then in the app: Twin Studio -> pick the character -> Identity -> Gender = Female ->
+Save changes; talk to her in Hinglish ("Tumhari yaad aa rahi hai.") and confirm feminine self-reference. Paste the
+script output back so it can be recorded; until then this is unverified against a real model.

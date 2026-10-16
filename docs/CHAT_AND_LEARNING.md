@@ -224,3 +224,40 @@ Guarantees (all covered by mocked tests; the first two also over real sockets, s
 - Several REST calls per action are not one database transaction (see `MIGRATIONS.md`).
 - Per-process state (`_streaming`, `_reviewing`, the model gate) assumes one backend worker.
 - Rate limits are counted from stored rows (messages / reviews per hour), not a shared limiter.
+
+## Character gender and pronouns in replies
+
+**Why:** a female character answered in Hindi with masculine self-reference ("kar raha hoon"). Audit result: before this
+change no gender or pronoun field existed anywhere (UI, API, DB, prompt), so the model inferred it from the description
+and fell back to masculine forms. A field alone would not have fixed it; the prompt has to carry and prioritise it.
+
+**Data path (verified by tests/test_gender.py):** Twin Studio Identity tab / New character form -> `appearance.gender`
+(`female|male|non_binary|unspecified`) and `appearance.pronouns` (<=40 chars) in the character's own `twins.appearance`
+JSON (no migration, nothing applied to any database) -> on every send the conversation's bound twin row is loaded
+(`conversation_routes`), `identity_of(twin)` reads it (never from the request body) -> `system_prompt(..., identity=)` ->
+native `/api/chat` system message. `GET .../chat-status` reports `identity`.
+
+**Prompt:** a `<character_identity>` block before `<original_description>` (authoritative when selected; "NOT SELECTED"
+otherwise) plus a one-line identity reminder right before the style reminder. It covers jokes, parenthetical asides,
+role-play, emotional outbursts and quoted self-speech, forbids masculine-by-habit and copying wrong forms from earlier
+turns, says agreement follows WHO a word refers to (user/others/nouns are not the character), says nothing is forced where
+a language does not mark gender, and states that gender never decides personality. Hindi/Hinglish agreement is shown as a
+pattern, explicitly "not sentences to repeat".
+
+**Precedence:** (1) selected gender/pronouns, (2) explicit identity wording in the description (used when nothing is
+selected; a clear "she/her" or "he/him" leaning is reported to the model), (3) the profile (never consulted for gender).
+If the selection and the description's wording disagree, the selection governs grammar and self-reference, the description
+still governs who the character is, the prompt says so, and the server logs `identity_conflict` (no silent merging).
+Unspecified + ambiguous description: the model is told not to guess and not to default to masculine, and to prefer
+constructions that avoid a gendered self-form. Non-binary: configured pronouns, gender-neutral phrasing where possible.
+Existing characters have no selection and keep working (NOT SELECTED); set the gender in Twin Studio to fix them.
+
+**Testing, honestly:** `tests/test_gender.py` (deterministic, mocked) proves what is sent to Ollama, switching, isolation,
+validation, and that `app/grammar_check.py` catches the exact reported error while ignoring forms that refer to the
+user/others, noun genders and the ergative. It does NOT prove a model obeys. `python -m scripts.gender_eval` (user-run,
+needs your Ollama) measures that with a no-identity baseline, an adversarial masculine history, male, non-binary,
+unspecified and female->male switching. No live Ollama evaluation was run from the build container.
+
+**Limitations:** the checker is word-level and conservative (misses some constructions, cannot tell quoted speech of
+another person; Urdu script coverage is partial); model compliance is probabilistic; very long histories of wrong forms
+can still pull a small model; the conflict heuristic only reads English pronouns in the description.

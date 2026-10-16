@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type CharacterState, type Me, type Twin } from "../lib/api";
+import { api, type CharacterState, type Gender, type Me, type Twin } from "../lib/api";
 import { config } from "../lib/config";
 import { useCharacterScope, withCharacter } from "./characterScope";
 
@@ -40,7 +40,7 @@ export function useCharacter(id: string | null) {
 export function useCreateCharacter() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (b: { name: string; description?: string }) => api.post<CharacterDetail>("/api/v1/characters", b),
+    mutationFn: (b: { name: string; description?: string; gender?: Gender; pronouns?: string }) => api.post<CharacterDetail>("/api/v1/characters", b),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["characters"] }),
   });
 }

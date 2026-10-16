@@ -32,6 +32,7 @@ from app.chat import (
     system_prompt,
 )
 from app.config import get_settings
+from app.identity import description_conflicts, identity_of
 from app.providers import consent_version
 from app.routes import _active_consent, _eq, _twin, _with_portrait_url, owned_character
 from app.supabase_rest import SupabaseError, SupabaseRest, get_rest
@@ -170,6 +171,7 @@ async def chat_status(character_id: str | None = Query(default=None, max_length=
         "is_sample": provider.provider == "mock", "model_busy": model_gate.busy,
         "profile_state": _profile_state(twin, row),
         "profile_outdated": _profile_state(twin, row) == "outdated",
+        "identity": ({"gender": identity_of(twin).gender, "pronouns": identity_of(twin).pronouns} if twin else None),
         "limits": {"max_user_chars": s.chat_max_user_chars, "context_messages": s.chat_context_messages},
     }
 
@@ -342,8 +344,11 @@ async def stream_message(cid: str, body: MessageIn, user: AuthUser = Depends(cur
     memories = await _active_memories(rest, user, twin["id"])
     recent_user = [m["content"] for m in history if m["role"] == "user"][-1:]
     chosen = rank_memories(memories, body.content + " " + " ".join(recent_user), s.chat_memory_limit)
+    idn = identity_of(twin)        # from the record the conversation is bound to, never from the request
+    if description_conflicts(idn, description):
+        log.warning("identity_conflict: selected gender and description wording differ; the selection governs")
     sys_text = system_prompt(twin.get("name") or "", profile, description, chosen,
-                             profile_outdated=pstate == "outdated")
+                             profile_outdated=pstate == "outdated", identity=idn)
     ctx = build_context(sys_text, history, body.content, max_messages=s.chat_context_messages,
                         max_chars=s.chat_context_chars)
 

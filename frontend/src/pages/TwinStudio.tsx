@@ -10,17 +10,19 @@ import { Button, Card, EmptyState, Notice, Skeleton, TextArea, TextField } from 
 import { CharacterScopeContext } from "../hooks/characterScope";
 import { useCharacters } from "../hooks/useChat";
 import { useCharacter, useMe, useSaveTwin } from "../hooks/useMe";
-import type { CharacterState, ProviderInfo, Twin } from "../lib/api";
+import { GenderFields } from "../components/GenderFields";
+import type { CharacterState, Gender, ProviderInfo, Twin } from "../lib/api";
 
 type Form = {
   name: string; about: string;
-  appearance: { framing?: string; background?: string; lighting?: string };
+  appearance: { framing?: string; background?: string; lighting?: string; gender?: Gender; pronouns?: string };
 };
 const TABS = ["Identity", "Character", "Appearance"] as const;
 
 const fromTwin = (t: Twin): Form => ({
   name: t.name, about: t.about ?? "",
-  appearance: { framing: t.appearance.framing, background: t.appearance.background, lighting: t.appearance.lighting },
+  appearance: { framing: t.appearance.framing, background: t.appearance.background, lighting: t.appearance.lighting,
+                gender: t.appearance.gender, pronouns: t.appearance.pronouns },
 });
 const strip = (o: object) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
 
@@ -129,6 +131,8 @@ function Studio({ twin, character, consentGranted, provider, isSelf }: { twin: T
             <div className="space-y-5">
               <TextField label="Twin’s name" value={form.name} maxLength={80} onChange={(e) => set("name", e.target.value)} error={!form.name.trim() ? "A name is required." : null} />
               <TextArea label="About" value={form.about} maxLength={2000} onChange={(e) => set("about", e.target.value)} hint={`${form.about.length}/2000`} />
+              <GenderFields gender={form.appearance.gender} pronouns={form.appearance.pronouns}
+                onChange={(g, p) => set("appearance", { ...form.appearance, gender: g, pronouns: p })} />
               {isSelf
                 ? <p className="text-sm text-muted">Twin type: <strong>Yourself</strong>. Other characters you create with “+ New character” are separate, with their own description, portrait and conversations.</p>
                 : <p className="text-sm text-muted">This is a <strong>character</strong> you created. It has its own description, portrait, profile, memories and conversations, separate from your other characters. Use invented or consenting-person characters only.</p>}

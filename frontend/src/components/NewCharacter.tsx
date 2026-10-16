@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { ApiError } from "../lib/api";
 import { useCreateCharacter } from "../hooks/useMe";
+import { GenderFields } from "./GenderFields";
+import type { Gender } from "../lib/api";
 import { Button, Card, Notice, TextArea, TextField } from "./ui";
 
 /** Create another, separate character (its own description, portrait, profile, memories and conversations). */
@@ -8,13 +10,16 @@ export function NewCharacter({ onCreated, onCancel }: { onCreated: (id: string) 
   const create = useCreateCharacter();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [gender, setGender] = useState<Gender | undefined>(undefined);
+  const [pronouns, setPronouns] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
   const submit = async () => {
     setErr(null);
     if (!name.trim()) return setErr("Give the character a name.");
     try {
-      const res = await create.mutateAsync({ name: name.trim(), description: description.trim() || undefined });
+      const res = await create.mutateAsync({ name: name.trim(), description: description.trim() || undefined,
+        gender, pronouns: pronouns.trim() || undefined });
       onCreated(res.twin.id);
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Couldn’t create the character. Your text is still here — try again.");
@@ -29,6 +34,7 @@ export function NewCharacter({ onCreated, onCancel }: { onCreated: (id: string) 
           <p className="mt-1 text-sm text-muted">A separate character with its own description, portrait, profile, memories and conversations. It never shares them with your other characters.</p>
         </div>
         <TextField label="Character’s name" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} autoFocus />
+        <GenderFields gender={gender} pronouns={pronouns} onChange={(g, p) => { setGender(g); setPronouns(p ?? ""); }} />
         <TextArea label="Description (optional now)" value={description} maxLength={8000} rows={6}
           onChange={(e) => setDescription(e.target.value)}
           hint="Who they are and how they talk and behave. Every reply is guided by this. You can write or refine it later in the Character tab." />

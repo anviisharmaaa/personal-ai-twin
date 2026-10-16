@@ -271,6 +271,9 @@ async def create_character(body: CharacterCreateIn, user: AuthUser = Depends(cur
         raise character_error("invalid_name", "Give the character a name.", status.HTTP_422_UNPROCESSABLE_ENTITY)
     if body.about is not None:
         row["about"] = body.about.strip()
+    ident = {k: v for k, v in (("gender", body.gender), ("pronouns", (body.pronouns or "").strip() or None)) if v}
+    if ident:
+        row["appearance"] = ident
     if desc:
         row.update({"character_description": desc, "character_version": 1,
                     "character_updated_at": datetime.now(timezone.utc).isoformat()})

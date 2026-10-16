@@ -41,6 +41,34 @@ test.describe("multiple characters in Twin Studio", () => {
     await expect(page.getByLabel("Describe the person")).toHaveValue(ARJUN);              // its OWN description, not Anvi's
   });
 
+  test("gender and pronouns are chosen at creation and sent with the new character", async ({ page }) => {
+    const { cb } = await open(page);
+    await page.getByRole("button", { name: "+ New character" }).click();
+    const form = page.getByRole("form", { name: "New character" });
+    await form.getByLabel("Character’s name").fill("Kiran");
+    await form.getByRole("radio", { name: "Female", exact: true }).click();
+    await expect(form.getByRole("radio", { name: "Female", exact: true })).toHaveAttribute("aria-checked", "true");
+    await expect(form.getByLabel(/Pronouns/)).toHaveAttribute("placeholder", "she/her");
+    await form.getByLabel(/Pronouns/).fill("she/her");
+    await form.getByLabel(/Description/).fill("Kiran teases people she loves.");
+    await form.getByRole("button", { name: "Create character" }).click();
+    await expect(page).toHaveURL(/character=ch2/);
+    expect(cb.calls.find((c) => c.method === "POST" && c.path === "/api/v1/characters")?.body)
+      .toEqual({ name: "Kiran", description: "Kiran teases people she loves.", gender: "female", pronouns: "she/her" });
+  });
+
+  test("gender can be changed in the Identity tab and is saved with that character", async ({ page }) => {
+    const cb = newChars({ extra: [{ id: "ch2", name: "Arjun", description: ARJUN, version: 1, portrait_url: null }], n: 2 });
+    await open(page, cb, "/app/studio?character=ch2");
+    await page.getByRole("radio", { name: "Male", exact: true }).click();
+    await page.getByRole("button", { name: "Save changes" }).click();
+    const find = () => cb.calls.find((c) => c.method === "PUT" && c.path === "/api/v1/twin");
+    await expect.poll(find).toBeTruthy();
+    const put = find();
+    expect(put?.search).toBe("?character_id=ch2");
+    expect((put?.body as { appearance: { gender?: string } }).appearance.gender).toBe("male");
+  });
+
   test("editing a character changes only that character and the request says which one", async ({ page }) => {
     const cb = newChars({ extra: [{ id: "ch2", name: "Arjun", description: ARJUN, version: 1, portrait_url: null }], n: 2 });
     await open(page, cb, "/app/studio?character=ch2");

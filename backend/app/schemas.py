@@ -21,6 +21,9 @@ class Appearance(_Strict):
     framing: Literal["close", "bust", "wide"] | None = None
     background: Literal["ivory", "wine", "maroon", "gold"] | None = None
     lighting: Literal["soft", "warm", "neutral"] | None = None
+    # Grammar identity (see app/identity.py). Kept in the appearance JSON: no migration.
+    gender: Literal["female", "male", "non_binary", "unspecified"] | None = None
+    pronouns: str | None = Field(default=None, max_length=40)
 
 
 class TwinIn(_Strict):
@@ -40,6 +43,8 @@ class CharacterCreateIn(_Strict):
     name: str = Field(min_length=1, max_length=80)
     description: str = Field(default="", max_length=8000)
     about: str | None = Field(default=None, max_length=2000)
+    gender: Literal["female", "male", "non_binary", "unspecified"] | None = None
+    pronouns: str | None = Field(default=None, max_length=40)
 
 
 class AnalyzeIn(_Strict):

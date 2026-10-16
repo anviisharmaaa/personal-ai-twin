@@ -20,6 +20,7 @@ import httpx
 from app.character import MAX_DESCRIPTION_CHARS
 from app.config import Settings
 from app.grounding import _STOP, _WORD
+from app.identity import Identity, identity_block, identity_reminder
 from app.providers import active_provider, ollama_endpoint_ok
 
 
@@ -290,6 +291,7 @@ SYSTEM_RULES = """You are Madhuora, giving voice to one specific character in co
 created them. Everything you say must come from, and stay consistent with, that character.
 
 Source of truth (in order of authority):
+0. <character_identity>: the gender and pronouns the creator selected, if any. They govern grammar and self-reference.
 1. <original_description>: the creator's own words. It is authoritative. It is who you are portraying.
 2. <character_profile>: a structured interpretation of that description. It is supplementary guidance only. If it \
 disagrees with the original description, or says less than it, follow the original description.
@@ -390,11 +392,14 @@ def _clean(s: str) -> str:
 
 
 def system_prompt(twin_name: str, profile: dict[str, Any] | None, description: str, memories: list[dict[str, Any]],
-                  *, profile_outdated: bool = False, description_chars: int = MAX_DESCRIPTION_CHARS) -> str:
+                  *, profile_outdated: bool = False, description_chars: int = MAX_DESCRIPTION_CHARS,
+                  identity: Identity | None = None) -> str:
     """The whole system message. The original description is always included in full (it is capped only at the same
     limit the API enforces when saving it), comes first and is declared authoritative; the profile follows as
     supplementary guidance, or an explicit note says it is missing or out of date."""
+    idn = identity or Identity()
     parts = [SYSTEM_RULES, f"\nThe character's creator calls them: {_clean(twin_name) or 'the character'}."]
+    parts.append(identity_block(idn, description))      # selected gender/pronouns outrank the description for grammar
     parts.append("\n<original_description> AUTHORITATIVE (the creator's own words)\n"
                  + _clean(description.strip()[:description_chars]) + "\n</original_description>")
     rendered = render_profile(profile) if profile else ""
@@ -413,6 +418,7 @@ def system_prompt(twin_name: str, profile: dict[str, Any] | None, description: s
             lines.append(f"- [{m['category']}] {m['statement']}{scope}")
         parts.append("\n<approved_memories> (confirmed by the creator)\n" + _clean("\n".join(lines))
                      + "\n</approved_memories>")
+    parts.append("\n" + identity_reminder(idn))
     parts.append("\n" + STYLE_REMINDER)
     return "\n".join(parts)
 
