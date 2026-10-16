@@ -30,6 +30,23 @@ class Identity:
     def selected(self) -> bool:
         return self.gender != "unspecified" or bool(self.pronouns)
 
+    @property
+    def self_form(self) -> str:
+        """The grammatical form the character uses about itself: 'feminine', 'masculine' or 'neutral' (avoid gendered
+        self-forms). Female/male fix it. A non-binary or unspecified character only gets one when its pronouns say so
+        unambiguously (she/her only, or he/him only); anything else, including they/them, stays neutral."""
+        if self.gender == "female":
+            return "feminine"
+        if self.gender == "male":
+            return "masculine"
+        words = set(re.findall(r"[a-z]+", self.pronouns.lower()))
+        fem, masc = bool(words & {"she", "her", "hers"}), bool(words & {"he", "him", "his"})
+        if fem and not masc:
+            return "feminine"
+        if masc and not fem:
+            return "masculine"
+        return "neutral"
+
 
 def identity_of(twin: dict[str, Any] | None) -> Identity:
     """Read the selection from the character record that the conversation is bound to (never from a request)."""
@@ -65,37 +82,36 @@ def description_conflicts(identity: Identity, description: str) -> bool:
 
 # ---- prompt text ----------------------------------------------------------------------------------------------------
 
-_FORMS = {
-    "female": ("feminine", "Hindi/Urdu/Hinglish: \"main soch rahi hoon\", \"main thak gayi hoon\", \"main aayi thi\""),
-    "male": ("masculine", "Hindi/Urdu/Hinglish: \"main soch raha hoon\", \"main thak gaya hoon\", \"main aaya tha\""),
+_HINDI = {
+    "feminine": ("rahi, gayi, thi, aayi, baithi, thaki, karti, sochti, karungi", "raha, gaya, tha, aaya, baitha, thaka, karta, sochta, karunga"),
+    "masculine": ("raha, gaya, tha, aaya, baitha, thaka, karta, sochta, karunga", "rahi, gayi, thi, aayi, baithi, thaki, karti, sochti, karungi"),
 }
+_AVOID = ("\"main yahin hoon\", \"mujhe achha lag raha hai\", \"mera mann hai\", \"tumse baat karna achha lagta hai\", "
+          "\"mujhe yaad hai\", \"ho raha hai\"")
 
-_SHARED = """\
-Apply this to EVERY part of EVERY reply, in whatever language the user writes:
-- Whenever the language marks the speaker's gender (verbs, participles, adjectives and self-descriptions, as in Hindi, \
-Urdu and Hinglish, and also Spanish, French, Arabic, Russian and others), use the forms that agree with this identity \
-when you speak about yourself, consistently. That includes jokes, asides in parentheses, stage directions, role-play, \
-emotional outbursts and anything you quote yourself saying.
-- Do not fall back to the masculine by habit, because the user's messages or earlier replies in this conversation used \
-other forms, or because the model's default is masculine. Earlier replies may contain wrong forms: do not copy them.
-- Agreement follows WHO the word refers to. Forms about the user or other people agree with them, not with you, and the \
-grammatical gender of a noun is a fact about the noun, not about you.
-- Where the language does not mark gender (English first person, for example), say nothing extra and add no gender \
-markers. Never make the speech awkward to show gender.
-- Gender says nothing about personality, interests, emotions, abilities or relationship roles. Those come only from \
-the original description."""
+_WHOLE_REPLY = """\
+This applies to the WHOLE reply: jokes, asides in parentheses, stage directions, role-play, emotional lines, descriptions \
+of what you did earlier, and anything you quote yourself saying.
+Your own forms follow YOUR identity even when the user's message addresses you in other forms (for example \
+"tum kya kar rahe ho" to a woman, or "kar rahi ho" to a man), when earlier replies in this chat used other forms (they may \
+be wrong: do not copy them), or when a joke seems to call for the other form.
+Words that describe the user, other people, or things (a project, a day, a feeling, a baat) agree with THEM, not with you.
+Where a language does not mark gender (English first person), add nothing and never make speech awkward to show gender.
+Gender says nothing about personality, interests, emotions, abilities or relationship roles; those come only from the \
+original description."""
 
 
 def identity_block(idn: Identity, description: str = "") -> str:
     """The first-class identity instruction placed before the description. Empty selection gets an honest 'not selected'."""
+    form = idn.self_form
     if not idn.selected:
         lean = description_leaning(description)
-        hint = (f" The description's own wording points to {lean} ({'she/her' if lean == 'female' else 'he/him'}); follow it."
-                if lean != "unclear" else
-                " The description does not clearly say. Do not guess and do not default to masculine: where the language "
-                "forces a gendered form for yourself, follow any pronouns or gendered wording the description uses; if there "
-                "are none, rephrase to avoid gendered self-reference (for example, in Hindi use constructions such as "
-                "\"mujhe yaad hai\" or \"mera mann hai\" instead of a verb that has to be masculine or feminine).")
+        if lean != "unclear":
+            hint = (f" The description's own wording points to {lean} ({'she/her' if lean == 'female' else 'he/him'}); follow it.")
+        else:
+            hint = (" The description does not clearly say, so do NOT guess and do NOT default to masculine. Where Hindi, Urdu or "
+                    "Hinglish would force a masculine or feminine form for yourself, rephrase so none is needed "
+                    f"(for example {_AVOID}). Never write main + raha/rahi/gaya/gayi/tha/thi/karta/karti-type forms for yourself.")
         return ("\n<character_identity> NOT SELECTED\nThe creator has not chosen a gender or pronouns for this character." + hint
                 + "\n</character_identity>")
     lines = ["\n<character_identity> AUTHORITATIVE (explicitly selected by the creator; it outranks any other source for "
@@ -103,16 +119,17 @@ def identity_block(idn: Identity, description: str = "") -> str:
     if idn.gender in LABEL:
         lines.append(f"Gender: {LABEL[idn.gender]}.")
     lines.append(f"Pronouns: {idn.pronouns or 'as the description uses them'}.")
-    if idn.gender in _FORMS:
-        word, examples = _FORMS[idn.gender]
-        lines.append(f"Whenever the language marks gender, speak as yourself with {word} forms. Agreement pattern, not "
-                     f"sentences to repeat ({examples}).")
-    elif idn.gender == "non_binary":
-        lines.append("Refer to yourself and expect to be referred to with these pronouns. In languages where a verb or "
-                     "adjective for yourself must be masculine or feminine (Hindi, Urdu, Hinglish), prefer wording that "
-                     "avoids it (\"mujhe yaad hai\", \"mera mann hai\", \"ho raha hai\"); if it cannot be avoided, use "
-                     "the form the description indicates, and never default to masculine.")
-    lines.append(_SHARED)
+    if form in _HINDI:
+        use, never = _HINDI[form]
+        lines.append(f"RULE: whenever you speak about YOURSELF, use {form} grammatical forms wherever the language marks gender.")
+        lines.append(f"Hindi/Hinglish/Urdu: your verbs, participles and adjectives about yourself take the {form} endings "
+                     f"({use}) and never the other ({never}). This shows agreement; it is not a list of sentences to repeat.")
+    else:
+        why = "your configured pronouns are neither she/her nor he/him" if idn.pronouns else "no pronouns that fix a form were given"
+        lines.append(f"RULE: when you speak about YOURSELF, avoid gendered self-forms ({why}); never default to masculine.")
+        lines.append(f"In Hindi/Hinglish/Urdu use natural wording that needs none, for example {_AVOID}. Do not write main + "
+                     "raha/rahi/gaya/gayi/tha/thi/karta/karti-type forms for yourself; if a sentence needs one, rephrase it.")
+    lines.append(_WHOLE_REPLY)
     if description_conflicts(idn, description):
         lines.append("Note: the original description's wording seems to use different pronouns. The selection above "
                      "governs how you refer to yourself and are referred to; the description still governs who you are.")
@@ -121,18 +138,15 @@ def identity_block(idn: Identity, description: str = "") -> str:
 
 
 def identity_reminder(idn: Identity) -> str:
-    if idn.gender == "female":
-        return ("Identity reminder: you are a woman (she/her unless the creator chose otherwise). Use feminine forms for "
-                "yourself wherever the language marks gender, in every part of the reply.")
-    if idn.gender == "male":
-        return ("Identity reminder: you are a man (he/him unless the creator chose otherwise). Use masculine forms for "
-                "yourself wherever the language marks gender, in every part of the reply.")
-    if idn.gender == "non_binary":
-        return (f"Identity reminder: your pronouns are {idn.pronouns or 'they/them'}. Do not default to masculine forms; "
-                "avoid gendered self-reference where the language allows.")
-    if idn.pronouns:
-        return f"Identity reminder: your pronouns are {idn.pronouns}. Do not default to masculine forms."
-    return "Identity reminder: no gender is selected. Do not default to masculine forms for yourself."
+    form = idn.self_form
+    if form == "feminine":
+        return ("Identity reminder: you are a woman. Every Hindi/Hinglish form about YOU is feminine (rahi, gayi, thi, karti, "
+                "karungi), never raha/gaya/tha/karta/karunga, whatever the user's wording or earlier replies.")
+    if form == "masculine":
+        return ("Identity reminder: you are a man. Every Hindi/Hinglish form about YOU is masculine (raha, gaya, tha, karta, "
+                "karunga), never rahi/gayi/thi/karti/karungi, whatever the user's wording or earlier replies.")
+    return ("Identity reminder: no gendered form is configured for you. Avoid gendered self-forms in Hindi/Hinglish "
+            "(\"main yahin hoon\", \"mujhe achha lag raha hai\"); never default to masculine.")
 
 
 # =====================================================================================================================

@@ -232,3 +232,16 @@ script's invented identities: apply `20261016100000_user_identity.sql` to the DE
 (for example Woman / she/her), pick a Male character, say "Kal raat maine tumhe call kiya tha, tumne uthaya nahi." and check
 that his own forms are masculine ("main so gaya tha") and forms about you are feminine ("tum thak gayi ho"). Then change the
 setting to Man, send another message in the same chat, and confirm the forms about you change while his do not.
+
+### Gender evaluation, second iteration (user-run)
+
+    cd backend
+    python -m scripts.gender_eval --reps 5 --out gender_eval.json                 # configured temperature
+    python -m scripts.gender_eval --reps 3 --temps 0.3,0.5,0.7 --out gender_temps.json   # temperature comparison (longer)
+    python -m scripts.gender_eval --quick                                             # fast smoke run
+
+Read the "REPLIES TO READ" section: each flagged reply is printed in full with the forms the checker judged and their role.
+A flag on a form that really describes something else is a checker bug worth reporting; a flag on "main ... raha hoon" for a
+female character is a real miss. `legacy-female` is the pre-fix baseline (no identity block) and is excluded from the
+pass/fail exit code. The non-binary/unspecified rows count a masculine form as the "masculine default" failure. Paste the
+terminal output or the JSON back; nothing in the file is private (invented characters and messages only).

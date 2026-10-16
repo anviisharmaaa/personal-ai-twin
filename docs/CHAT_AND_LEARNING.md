@@ -290,3 +290,40 @@ the exact prompts sent to Ollama. They do not prove generated grammar. `scripts/
 user matrix and checks forms about the character and forms about the user separately (`grammar_check.check_self_gender`
 vs `check_user_form`). No live Ollama run was possible from the build container. Limitations: the checker is
 word-level (e.g. "aap ... rahe hain" is treated as masculine plural), quoted speech is not separated, and models may slip.
+
+## Gender agreement: second iteration (after the first real qwen3.5:9b run)
+
+Your first live run showed the identity block reached the model but agreement was still inconsistent (female 4 flagged / 9
+pass, female+bad-history 3/11, male 1/11, non-binary 10 flagged, unspecified 8 flagged). The raw replies were not available
+to me when I made these changes, so none of the counts could be re-judged; they may include checker false positives. What I
+changed, and why:
+
+1. **The checker no longer counts words, it classifies forms.** `app/grammar_check.py` now gives every gender-marked form a
+   role: `self`, `user`, `other`, `quoted`, or `ambiguous`, and judges only `self`/`user`. A first-person copula
+   ("... raha **hoon**") makes a form certainly the speaker's; "ho" the addressee's; "hai/hain/tha/thi" and bare pasts need the
+   nearest subject pronoun within a short window; ergative/dative openers ("maine", "mujhe", "tumhari ...") and the
+   experiencer constructions ("yaad aa rahi hai", "neend aa gayi", "ho gaya") are ambiguous; bare "tha/thi" count only
+   next to a participle or within two words of "main"; quoted spans are never judged; plural/honorific -e forms are never
+   held against a singular speaker; "-unga/-ungi" futures are certainly first person. Things it cannot place are reported
+   as ambiguous, not as errors. Non-binary/unspecified characters are judged as "avoids gendered self-forms", and a
+   masculine form there is reported separately as the **masculine default**.
+2. **The evaluation was biased.** Two of the original messages addressed the character with masculine forms ("Abhi kya kar
+   rahe ho?", "Aaj din kaisa gaya?"), which invites a female character to echo them. The default messages are now
+   gender-neutral toward the character, and the masculine/feminine-address messages are separate, explicitly adversarial
+   conditions (`female+masc-address`, `male+fem-address`, `non-binary +masc-address`).
+3. **The prompt rule is operational.** The block now opens with `RULE: whenever you speak about YOURSELF, use feminine
+   (or masculine) grammatical forms`, names the right endings and the wrong ones (rahi, gayi, thi, aayi, baithi, thaki,
+   karti, sochti, karungi vs raha, gaya, tha ...), says the whole reply is covered (jokes, asides, past events, quoted
+   self-speech), says the user's wording and earlier replies must not be copied, and that words about the user, other
+   people or things agree with them. The closing reminder repeats it with the endings, right before the style reminder.
+4. **Neutral identities have a real instruction.** For non-binary or unspecified characters the rule is to avoid gendered
+   self-forms with concrete natural alternatives ("main yahin hoon", "mujhe achha lag raha hai", "mera mann hai",
+   "tumse baat karna achha lagta hai") and never to default to masculine. A non-binary character whose configured pronouns
+   unambiguously say she/her (or he/him, or she/they, he/they) gets the matching forms; they/them and everything else stays
+   neutral (`Identity.self_form`).
+5. **Temperature.** `python -m scripts.gender_eval --temps 0.3,0.5,0.7` runs the same prompts, messages and seeds at each
+   value (only `options.temperature` differs; streaming and the output ceiling are untouched) and prints correctness, user
+   forms, masculine-default count, mean words, median first-token time and a distinct-openings count as a crude robotic-ness
+   signal, plus sample replies to read. The default stays `CHAT_TEMPERATURE` (0.7) until real numbers justify a change.
+
+Not claimed: that the stronger prompt fixes the model. It is a measurable change to test, not a result.
