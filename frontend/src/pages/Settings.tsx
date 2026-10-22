@@ -124,6 +124,14 @@ function ConsentCard() {
           {c.provider.disclosure.map((d) => <li key={d}>{d}</li>)}
         </ul>
         {c.provider.external && <p className="mt-2 text-muted">Nothing is sent until you ask Madhuora to understand a character.</p>}
+        {c.chat_provider && c.chat_provider.id !== "none" && (
+          <div className="mt-4">
+            <p className="font-medium">Chat provider on this server: {c.chat_provider.label}</p>
+            <ul className="mt-2 list-disc space-y-2 pl-5 text-muted">
+              {c.chat_provider.disclosure.map((d) => <li key={d}>{d}</li>)}
+            </ul>
+          </div>
+        )}
       </div>
       {!c.granted && <div className="mt-4"><Button loading={grant.isPending} onClick={async () => { setErr(null); try { await grant.mutateAsync(); } catch (e) { setErr(e instanceof Error ? e.message : "Couldn’t record consent."); } }}>Agree to AI processing</Button></div>}
       {c.granted && <div className="mt-4"><Button variant="secondary" loading={withdraw.isPending} onClick={async () => { setErr(null); try { await withdraw.mutateAsync(); } catch (e) { setErr(e instanceof Error ? e.message : "Couldn’t withdraw."); } }}>Withdraw consent</Button></div>}

@@ -173,7 +173,8 @@ async def chat_status(character_id: str | None = Query(default=None, max_length=
     return {
         "available": reason is None, "reason": reason, "character_id": twin["id"] if twin else None,
         "provider": provider.provider,
-        "is_sample": provider.provider == "mock", "model_busy": model_gate.busy,
+        "is_sample": provider.provider == "mock",
+        "model_busy": bool(getattr(provider, "exclusive", False)) and model_gate.busy,
         "profile_state": _profile_state(twin, row),
         "profile_outdated": _profile_state(twin, row) == "outdated",
         "user_identity_set": (await _user_identity(rest, user)).stated,
@@ -343,7 +344,8 @@ async def stream_message(cid: str, body: MessageIn, user: AuthUser = Depends(cur
     else:
         user_row = None
 
-    if model_gate.busy:     # a quick refusal; the real slot is taken when the stream starts (below)
+    uses_gate = bool(getattr(provider, "exclusive", False))   # only a local model needs the one-at-a-time slot
+    if uses_gate and model_gate.busy:     # a quick refusal; the real slot is taken when the stream starts (below)
         raise _err("model_busy", "The local model is busy with another task. Try again in a moment.",
                    status.HTTP_429_TOO_MANY_REQUESTS)
     profile = row["profile"] if row and pstate != "missing" else None
@@ -396,8 +398,10 @@ async def stream_message(cid: str, body: MessageIn, user: AuthUser = Depends(cur
         t0 = asyncio.get_running_loop().time()
         # The slot and the per-conversation lock are taken HERE, when the stream really starts, so a request that
         # is dropped before it starts can never leave them held.
-        busy = "in_progress" if cid in _streaming else ("model_busy" if not model_gate.try_acquire() else None)
+        busy = ("in_progress" if cid in _streaming
+                else ("model_busy" if uses_gate and not model_gate.try_acquire() else None))
         acquired = busy is None
+        got_slot = acquired and uses_gate
         if acquired:
             _streaming.add(cid)
         try:
@@ -459,6 +463,7 @@ async def stream_message(cid: str, body: MessageIn, user: AuthUser = Depends(cur
         finally:
             if acquired:
                 _streaming.discard(cid)
+            if got_slot:
                 model_gate.release()
 
     return StreamingResponse(events(), media_type="text/event-stream", headers={

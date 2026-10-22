@@ -52,8 +52,13 @@ class Settings(BaseSettings):
     analysis_daily_limit: int = 10
     analysis_timeout_seconds: float = 60.0
     analysis_max_output_tokens: int = 3000
-    # ---- Chat (Phase 4). Provider is the same explicit AI_PROVIDER; chat is allowed only for local Ollama (and the
-    # labelled sample generator). All limits are configurable and hard-bounded.
+    # ---- Chat. CHAT_PROVIDER is its own explicit setting (nvidia | ollama | mock | empty = chat off) and never falls
+    # back to another provider. Character analysis and learning keep following AI_PROVIDER. All limits are configurable
+    # and hard-bounded.
+    chat_provider: str = "nvidia"
+    # NVIDIA-hosted chat model (OpenAI-compatible /chat/completions on NVIDIA_BASE_URL, key from NVIDIA_API_KEY). Chosen
+    # explicitly by the operator; free hosted access is trial access for evaluation and development.
+    nvidia_chat_model: str = "nvidia/nemotron-3-ultra-550b-a55b"
     # Messages and characters of earlier history sent to the model, newest first; older turns are dropped (and the UI
     # is told), never silently pretended to be remembered.
     chat_context_messages: int = Field(default=24, ge=2, le=100)

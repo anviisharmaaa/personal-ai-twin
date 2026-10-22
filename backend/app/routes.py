@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from app.auth import AuthUser, current_user
 from app.character_store import character_view, get_profile_row
 from app.config import get_settings
-from app.providers import consent_version, provider_info
+from app.providers import chat_disclosure, consent_version, provider_info
 from app.schemas import CharacterCreateIn, ConsentIn, OnboardingStep, ProfileIn, TwinIn
 from app.supabase_rest import SupabaseError, SupabaseRest, get_rest
 
@@ -116,7 +116,8 @@ async def me(user: AuthUser = Depends(current_user), rest: SupabaseRest = Depend
         "ai_consent": {"granted": bool(consent and consent["version"] == cv),
                        "version": consent["version"] if consent else None,
                        "current_version": cv,
-                       "provider": provider_info(get_settings())},
+                       "provider": provider_info(get_settings()),
+                       "chat_provider": chat_disclosure(get_settings())},
     }
 
 

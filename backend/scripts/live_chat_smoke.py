@@ -2,7 +2,7 @@
 
     python -m scripts.live_chat_smoke
 
-Needs AI_PROVIDER=ollama and OLLAMA_CHARACTER_MODEL in backend/.env, and Ollama running. It uses only the synthetic
+Needs CHAT_PROVIDER=ollama, AI_PROVIDER=ollama and OLLAMA_CHARACTER_MODEL in backend/.env, and Ollama running. It uses only the synthetic
 character and conversation below (never your database), and no network beyond your own Ollama. It reports:
 
   * time to first token, total time, number of separate stream pieces and their spread (proof the output really
@@ -62,8 +62,8 @@ async def stream_once(provider, history: list[ChatMessage]) -> tuple[str, list[f
 
 async def main() -> int:
     s = get_settings()
-    if s.ai_provider != "ollama" or not s.ollama_character_model or not ollama_endpoint_ok(s):
-        print("Set AI_PROVIDER=ollama and OLLAMA_CHARACTER_MODEL in backend/.env (loopback address) first.")
+    if s.ai_provider != "ollama" or s.chat_provider.strip().lower() != "ollama" or not s.ollama_character_model or not ollama_endpoint_ok(s):
+        print("Set CHAT_PROVIDER=ollama, AI_PROVIDER=ollama and OLLAMA_CHARACTER_MODEL in backend/.env (loopback address) first.")
         return 2
     provider = build_chat_provider(s)
     if not provider.configured:

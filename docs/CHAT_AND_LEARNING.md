@@ -139,33 +139,44 @@ Tests: `tests/test_character_conversations.py` (11, includes a mutation check th
 
 ## Providers
 
-`CharacterAnalyzer` (structured analysis) is unchanged. Chat has its own `ChatProvider` (`app/chat.py`):
-`OllamaChatProvider` (real `stream=true`, loopback-guarded) and a labelled `MockChatProvider`. NVIDIA and OpenAI return
-`chat_provider_unsupported` (personal conversations stay off the NVIDIA trial endpoint; paid OpenAI chat is not
-switched on). There is no fallback between providers. Learning extraction (`app/learning.py`) runs on Ollama only;
-sample mode answers `learning_unavailable_in_sample_mode`.
+`CharacterAnalyzer` (structured analysis) is unchanged and keeps following `AI_PROVIDER`. Chat has its own
+`ChatProvider` (`app/chat.py`) chosen by its own explicit setting, **`CHAT_PROVIDER`** (default `nvidia`):
 
-One local-model job at a time: `ModelGate` (`LOCAL_MODEL_CONCURRENCY`, default 1) is shared by chat replies,
-character analysis and learning reviews. A second job is refused at once with `model_busy` (429), never queued silently.
+| `CHAT_PROVIDER` | Provider | Notes |
+|---|---|---|
+| `nvidia` (default) | `NvidiaChatProvider` | Hosted **Nemotron 3 Ultra** (`NVIDIA_CHAT_MODEL=nvidia/nemotron-3-ultra-550b-a55b`) through NVIDIA's OpenAI-compatible `POST {NVIDIA_BASE_URL}/chat/completions` (`https://integrate.api.nvidia.com/v1`), `stream=true` (SSE), `max_tokens=CHAT_MAX_OUTPUT_TOKENS` (128), `chat_template_kwargs.enable_thinking=false`, key from `NVIDIA_API_KEY` as a Bearer header. Hosted **trial** access, subject to NVIDIA's terms, availability and rate limits; no paid deployment. |
+| `ollama` | `OllamaChatProvider` | Kept for a deliberate local rollback (`CHAT_PROVIDER=ollama`, `OLLAMA_CHARACTER_MODEL`). Never used while `nvidia` is selected. |
+| `mock` | `MockChatProvider` | Labelled samples; refused in production. |
+| empty | none | Chat is off (`ai_off`). |
 
-## API
+**No fallback, ever.** NVIDIA failing never switches to Ollama or anything else; the user sees the provider's own error:
+`provider_auth` (401/403: check `NVIDIA_API_KEY`), `provider_rate_limited` (429), `provider_unavailable` (5xx),
+`provider_model_missing` (404: check `NVIDIA_CHAT_MODEL`), `provider_unreachable` (connect failure or connect timeout),
+`first_token_timeout` / `generation_timeout` (read timeouts, `CHAT_FIRST_TOKEN_TIMEOUT_SECONDS`/`CHAT_TOTAL_TIMEOUT_SECONDS`),
+`provider_rejected` (other 4xx), `invalid_stream`. Without a key chat is `not_configured` (503) and the status route says so.
+The failing turn keeps the user's message and stores the assistant message as `failed` with that code. The key is read
+only from the backend settings, sent only as the Authorization header, and appears in no log line, error message, SSE
+event, API response or frontend bundle (tests assert this with a sentinel key). The response's `reasoning_content` /
+`reasoning` fields, if any, are counted (`thinking_chars`) and dropped: never shown, saved or sent to the browser.
 
-All under `/api/v1`, bearer token required, user id taken from the verified token, every query also filters
-`owner_id` (RLS is the second layer).
+**What the model receives** is unchanged from before and built server-side for the authenticated user only: the original
+description (authoritative), the selected character's gender/pronouns, the user's saved gender/pronouns/address
+preference, the validated profile (supplementary), approved memories of that character only, recent messages of that
+conversation, and the dialogue rules. Provider choice does not alter the prompt.
 
-| Route | Purpose |
-|---|---|
-| `GET /chat/status` | available / reason / provider / is_sample / model_busy / profile_outdated / limits |
-| `GET,POST /conversations`, `PATCH,DELETE /conversations/{id}` | list, create, rename, delete (`?delete_memories=true`) |
-| `GET /conversations/{id}/messages` | history; marks a reply cut off by a restart `incomplete/interrupted` |
-| `POST /conversations/{id}/messages/stream` | send + stream the reply (SSE) |
-| `GET,PUT /learning/preference` | learning consent (default off; `disclosure_version` required to turn on) |
-| `POST /conversations/{id}/learning/review` → 202, `GET …/learning` | background review, state, candidates |
-| `GET /memory/candidates`, `POST …/{id}/approve`, `POST …/{id}/reject` | review |
-| `GET /memories`, `PATCH,DELETE /memories/{id}` | inspect, edit/pin, forget (`?incorrect=true`) |
-| `POST /memories/{id}/profile-proposal`, `GET /profile-proposals`, `POST …/{id}/resolve`, `GET /profile-revisions` | profile refinement |
+**Consent.** Chat content now goes to a third party, so the consent version includes the chat provider
+(`2026-10-v3-<ai provider>-chat-<chat provider>`, e.g. `2026-10-v3-nvidia-chat-nvidia`). Existing consents lapse once and
+users agree again on the new wording (`/me` returns `ai_consent.chat_provider`, shown in onboarding and Settings).
 
-### SSE protocol (`text/event-stream`, `event:` + one-line JSON `data:`)
+**Data sent to the trial endpoint.** Messages, the character description/profile, approved memories and saved
+gender/pronouns. NVIDIA's trial terms allow monitoring and use of submitted content, and the endpoint is not meant for
+personal, health or payment data. Keep conversations and descriptions fictional or non-sensitive; the live smoke test
+uses invented characters and messages only.
+
+Local-model concurrency: `ModelGate` (`LOCAL_MODEL_CONCURRENCY`, default 1) serialises **local** model jobs (Ollama chat,
+character analysis, learning reviews). Hosted providers set `exclusive = False`, so NVIDIA chat does not wait for, or
+block, a local job. A second *local* job is still refused at once with `model_busy` (429). Learning extraction
+(`app/learning.py`) still runs on Ollama only; sample mode answers `learning_unavailable_in_sample_mode`.
 
 ```
 started  {user_message_id, assistant_message_id, provider, model, is_sample, replayed,
@@ -175,7 +186,7 @@ done     {assistant_message_id, status:"complete", first_token_ms, duration_ms, 
 error    {code, assistant_message_id, message, partial_saved}      (terminal; partial text is kept, never "complete")
 ```
 Refusals before streaming starts are normal HTTP errors (403 `consent_required`, 409 `no_character`/`in_progress`,
-429 `model_busy`/`rate_limited`, 503 `chat_provider_unsupported`/`not_configured`/`ai_disabled`, 404 not yours).
+429 `model_busy`/`rate_limited`, 503 `ai_off`/`not_configured`/`ai_disabled`, 404 not yours).
 
 Guarantees (all covered by mocked tests; the first two also over real sockets, see below):
 - The client message id makes a send idempotent: a repeat of a finished turn replays the saved reply (`replayed:true`);

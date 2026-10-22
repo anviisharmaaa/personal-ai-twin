@@ -99,8 +99,15 @@ function Welcome({ onDone }: { onDone: () => void }) {
           <ul className="mt-2 list-disc space-y-2 pl-5 text-muted">
             {consent.provider.disclosure.map((d) => <li key={d}>{d}</li>)}
           </ul>
-          {consent.provider.external && <span className="mt-2 block text-muted">Nothing is sent until you ask Madhuora to understand a character, and chat isn’t live yet.</span>}
+          {consent.provider.external && <span className="mt-2 block text-muted">Nothing is sent until you ask Madhuora to understand a character.</span>}
         </li>
+        {consent.chat_provider && consent.chat_provider.id !== "none" && (
+          <li><strong>Chat provider on this server: {consent.chat_provider.label}.</strong>
+            <ul className="mt-2 list-disc space-y-2 pl-5 text-muted">
+              {consent.chat_provider.disclosure.map((d) => <li key={d}>{d}</li>)}
+            </ul>
+          </li>
+        )}
         <li><strong>You’re in control.</strong> You can withdraw this consent any time in Settings. Nothing is remembered long-term without your approval.</li>
       </ul>
       <label className="mt-6 flex items-start gap-3 text-sm">

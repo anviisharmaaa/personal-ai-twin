@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from app.chat import (
     ChatError,
     ChatMessage,
+    NvidiaChatProvider,
     OllamaChatProvider,
     StreamMeta,
     ThinkFilter,
@@ -49,6 +50,7 @@ class ScriptedChat:
     provider = "ollama"
     model = "qwen-test:9b"
     configured = True
+    exclusive = True   # stands in for a local model, which runs through the one-at-a-time gate
 
     def __init__(self, deltas: list[str] | None = None, *, fail: ChatError | None = None, finish: str = "stop",
                  cancel: bool = False) -> None:
@@ -88,6 +90,7 @@ def _reset() -> Iterator[None]:
 @pytest.fixture
 def ollama_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_PROVIDER", "ollama")
+    monkeypatch.setenv("CHAT_PROVIDER", "ollama")
     monkeypatch.setenv("OLLAMA_CHARACTER_MODEL", "qwen-test:9b")
     get_settings.cache_clear()
 
@@ -302,31 +305,36 @@ def test_chat_needs_the_current_provider_consent_and_a_character_description(cli
     assert fake.tables["messages"] == []                                  # nothing was stored for a refused request
 
 
-def test_chat_is_refused_on_nvidia_and_openai_and_never_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
-    for p in ("nvidia", "openai"):
-        s = Settings(_env_file=None, ai_provider=p, nvidia_api_key="k", nvidia_character_model="m",
-                     openai_api_key="k", openai_character_model="m", ollama_character_model="would-be-fallback")
-        c = build_chat_provider(s)
-        assert isinstance(c, UnavailableChat) and c.code == "chat_provider_unsupported" and not c.configured
-    off = build_chat_provider(Settings(_env_file=None, ollama_character_model="m"))
-    assert isinstance(off, UnavailableChat) and off.code == "ai_off"
-    local = build_chat_provider(Settings(_env_file=None, ai_provider="ollama", ollama_character_model="m"))
+def test_chat_follows_chat_provider_only_and_never_falls_back() -> None:
+    # AI_PROVIDER (analysis/learning) never decides the chat provider, and no provider substitutes for another.
+    s = Settings(_env_file=None, ai_provider="ollama", chat_provider="", ollama_character_model="m")
+    off = build_chat_provider(s)
+    assert isinstance(off, UnavailableChat) and off.code == "ai_off" and not off.configured
+    s = Settings(_env_file=None, ai_provider="ollama", chat_provider="nvidia", ollama_character_model="would-be-fallback")
+    nokey = build_chat_provider(s)
+    assert isinstance(nokey, UnavailableChat) and nokey.code == "not_configured" and nokey.provider == "nvidia"
+    assert "NVIDIA_API_KEY" in nokey.message
+    keyed = build_chat_provider(Settings(_env_file=None, chat_provider="nvidia", nvidia_api_key="k",
+                                         ai_provider="openai"))
+    assert isinstance(keyed, NvidiaChatProvider) and keyed.configured
+    unsupported = build_chat_provider(Settings(_env_file=None, chat_provider="openai", openai_api_key="k"))
+    assert isinstance(unsupported, UnavailableChat) and unsupported.code == "ai_off"
+    local = build_chat_provider(Settings(_env_file=None, chat_provider="ollama", ollama_character_model="m"))
     assert isinstance(local, OllamaChatProvider) and local.configured
-    remote = build_chat_provider(Settings(_env_file=None, ai_provider="ollama", ollama_character_model="m",
+    remote = build_chat_provider(Settings(_env_file=None, chat_provider="ollama", ollama_character_model="m",
                                           ollama_base_url="http://example.com/v1"))
     assert isinstance(remote, OllamaChatProvider) and not remote.configured    # a non-local address is refused
 
 
-def test_unsupported_provider_returns_a_clear_error_through_the_api(client: TestClient, fake: FakeSupabase,
+def test_nvidia_without_a_key_returns_a_clear_error_through_the_api(client: TestClient, fake: FakeSupabase,
                                                                     monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AI_PROVIDER", "nvidia")
-    monkeypatch.setenv("NVIDIA_API_KEY", "k")
-    monkeypatch.setenv("NVIDIA_CHARACTER_MODEL", "m")
+    monkeypatch.setenv("CHAT_PROVIDER", "nvidia")
     get_settings.cache_clear()
     h = ready_user(client, fake)
     cid = new_conversation(client, h)
     r = send(client, h, cid, "personal text that must never leave")
-    assert r.status_code == 503 and r.json()["detail"]["code"] == "chat_provider_unsupported"
+    assert r.status_code == 503 and r.json()["detail"]["code"] == "not_configured"
+    assert client.get("/api/v1/chat/status", headers=h).json()["reason"] == "not_configured"
 
 
 # ---- ownership ------------------------------------------------------------------------------------------------------------

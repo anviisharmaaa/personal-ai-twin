@@ -62,6 +62,7 @@ def _stub_ollama() -> Starlette:
 def servers(monkeypatch: pytest.MonkeyPatch) -> Iterator[int]:
     ollama_port, app_port = _free_port(), _free_port()
     monkeypatch.setenv("AI_PROVIDER", "ollama")
+    monkeypatch.setenv("CHAT_PROVIDER", "ollama")
     monkeypatch.setenv("OLLAMA_CHARACTER_MODEL", "stub:1b")
     monkeypatch.setenv("OLLAMA_BASE_URL", f"http://127.0.0.1:{ollama_port}/v1")
     get_settings.cache_clear()

@@ -16,13 +16,19 @@ const REASONS: Record<string, { text: string; to?: string; label?: string }> = {
   consent_required: { text: "Chat needs your permission to process text with the AI provider this server uses.", to: "/app/settings", label: "Open Settings" },
   no_character: { text: "Describe your character first: every reply is guided by that description.", to: "/app/studio", label: "Open Twin Studio" },
   ai_disabled: { text: "AI is temporarily switched off on this server." },
-  ai_off: { text: "No AI provider is selected on this server, so chat is off." },
-  not_configured: { text: "The chosen AI provider isn’t fully set up on this server." },
-  chat_provider_unsupported: { text: "Chat isn’t enabled for the AI provider this server uses. Personal conversations stay off the NVIDIA trial endpoint, and paid OpenAI chat isn’t switched on." },
+  ai_off: { text: "No chat provider is selected on this server (CHAT_PROVIDER), so chat is off." },
+  not_configured: { text: "The chat provider isn’t fully set up on this server (for NVIDIA, the API key in the backend .env is missing)." },
 };
 
 const ERRORS: Record<string, string> = {
   local_unavailable: "Ollama isn’t running or couldn’t be reached.",
+  provider_auth: "NVIDIA rejected the API key. Check NVIDIA_API_KEY in the backend .env.",
+  provider_rate_limited: "NVIDIA’s trial endpoint is rate limiting requests. Wait a moment and try again.",
+  provider_unavailable: "NVIDIA’s service is unavailable right now. Try again shortly.",
+  provider_unreachable: "Couldn’t reach NVIDIA. Check the server’s network connection.",
+  provider_model_missing: "NVIDIA doesn’t offer the configured chat model. Check NVIDIA_CHAT_MODEL.",
+  provider_rejected: "The chat provider couldn’t accept this request.",
+  provider_error: "The chat provider couldn’t answer.",
   local_model_missing: "The chosen model isn’t installed in Ollama.",
   first_token_timeout: "The model took too long to start answering.",
   generation_timeout: "The model stopped answering part-way through.",

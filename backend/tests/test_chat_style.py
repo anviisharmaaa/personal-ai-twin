@@ -136,7 +136,7 @@ def test_chat_limit_is_configurable_and_other_features_keep_their_own_limits() -
     assert s.chat_max_output_tokens == 128 and s.chat_think is False
     assert s.analysis_max_output_tokens == 3000 and s.ollama_max_output_tokens == 4096
     assert s.learning_max_output_tokens == 1536                             # untouched by the chat change
-    custom = Settings(_env_file=None, chat_max_output_tokens=200, ai_provider="ollama", ollama_character_model="m")  # type: ignore[call-arg]
+    custom = Settings(_env_file=None, chat_max_output_tokens=200, chat_provider="ollama", ollama_character_model="m")  # type: ignore[call-arg]
     chat = build_chat_provider(custom)
     assert isinstance(chat, OllamaChatProvider) and chat.settings_summary()["num_predict"] == 200
     assert custom.ollama_max_output_tokens == 4096                          # analysis limit did not move

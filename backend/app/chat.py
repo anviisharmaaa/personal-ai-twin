@@ -1,8 +1,9 @@
 """Chat: a streaming provider interface (separate from structured character analysis), the prompt that carries the
 twin's validated profile and approved memories, bounded history, memory retrieval and the SSE wire format.
 
-Nothing here chooses a provider by itself: `build_chat_provider` follows the one explicit AI_PROVIDER setting and
-refuses providers chat is not allowed on (no personal conversations to NVIDIA's trial endpoint, no paid calls).
+Nothing here chooses a provider by itself: `build_chat_provider` follows the one explicit CHAT_PROVIDER setting
+(nvidia | ollama | mock). There is never a fallback from one provider to another: a failing provider returns its own
+clear error. Character analysis and learning keep following AI_PROVIDER.
 """
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ from app.character import MAX_DESCRIPTION_CHARS
 from app.config import Settings
 from app.grounding import _STOP, _WORD
 from app.identity import Identity, UserIdentity, identity_block, identity_reminder, user_identity_block, user_reminder
-from app.providers import active_provider, ollama_endpoint_ok
+from app.providers import active_chat_provider, ollama_endpoint_ok
 
 
 class ChatError(Exception):
@@ -119,6 +120,7 @@ class OllamaChatProvider:
     final record carries exact timings and token counts. Analysis and learning review keep using /v1 untouched."""
 
     provider = "ollama"
+    exclusive = True    # a local model: replies run one at a time through the model gate
 
     def __init__(self, base_url: str, model: str, *, max_output_tokens: int, first_token_timeout: float,
                  total_timeout: float, think: bool = False, temperature: float = 0.7, num_ctx: int = 0,
@@ -235,16 +237,149 @@ class OllamaChatProvider:
         yield "meta", meta
 
 
+class NvidiaChatProvider:
+    """Streams from NVIDIA's hosted OpenAI-compatible POST {NVIDIA_BASE_URL}/chat/completions (stream=true, SSE).
+
+    Reasoning is switched off with the NVIDIA-specific `chat_template_kwargs.enable_thinking=false`, and any reasoning
+    field the service still sends (`reasoning_content` / `reasoning`) is counted but never yielded, stored or shown.
+    The API key is read from settings once, sent only as a Bearer header, and never appears in logs, errors, API
+    responses or the frontend. No fallback: every failure maps to a clear ChatError for this provider alone."""
+
+    provider = "nvidia"
+    exclusive = False   # hosted: replies need no local model slot
+
+    def __init__(self, base_url: str, model: str, api_key: str, *, max_output_tokens: int, first_token_timeout: float,
+                 total_timeout: float, temperature: float = 0.7,
+                 transport: httpx.AsyncBaseTransport | None = None) -> None:
+        self._url = base_url.strip().rstrip("/") + "/chat/completions"
+        self.model = model
+        self._key = api_key
+        self._max_out, self._first, self._total = max_output_tokens, first_token_timeout, total_timeout
+        self._temp = temperature
+        self._transport = transport
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.model and self._key and self._url.startswith("https://"))
+
+    def settings_summary(self) -> dict[str, Any]:
+        """Generation settings for diagnostics. Never contains the key or any message text."""
+        return {"endpoint": self._url, "max_tokens": self._max_out, "temperature": self._temp,
+                "enable_thinking": False, "key_set": bool(self._key)}
+
+    def _payload(self, messages: list[ChatMessage]) -> dict[str, Any]:
+        return {
+            "model": self.model, "stream": True, "max_tokens": self._max_out, "temperature": self._temp,
+            "chat_template_kwargs": {"enable_thinking": False},
+            "messages": [{"role": m.role, "content": m.content} for m in messages],
+        }
+
+    @staticmethod
+    def _http_error(status: int) -> ChatError:
+        if status in (401, 403):
+            return ChatError("provider_auth", "NVIDIA rejected the API key. Check NVIDIA_API_KEY in the backend .env "
+                             "(create a new key at build.nvidia.com if it expired).", 502, f"http={status}")
+        if status == 429:
+            return ChatError("provider_rate_limited", "NVIDIA's trial endpoint is rate limiting requests. Wait a "
+                             "moment and send the message again.", 429, "http=429")
+        if status == 404:
+            return ChatError("provider_model_missing", "NVIDIA doesn't offer the configured model or endpoint. Check "
+                             "NVIDIA_CHAT_MODEL and NVIDIA_BASE_URL.", 502, "http=404")
+        if status >= 500:
+            return ChatError("provider_unavailable", "NVIDIA's service is unavailable right now. Try again shortly.",
+                             503, f"http={status}")
+        return ChatError("provider_rejected", "NVIDIA couldn't accept this request.", 502, f"http={status}")
+
+    async def stream(self, messages: list[ChatMessage]) -> AsyncIterator[ChatItem]:
+        started = time.monotonic()
+        meta = StreamMeta()
+        think = ThinkFilter()
+        got_text = False
+        headers = {"Authorization": f"Bearer {self._key}", "Accept": "text/event-stream",
+                   "Content-Type": "application/json"}
+        try:
+            async with httpx.AsyncClient(
+                transport=self._transport, timeout=httpx.Timeout(self._first, connect=10.0),
+            ) as client:
+                async with client.stream("POST", self._url, json=self._payload(messages), headers=headers) as res:
+                    if res.status_code != 200:
+                        await res.aread()
+                        raise self._http_error(res.status_code)
+                    async for line in res.aiter_lines():
+                        if time.monotonic() - started > self._total:
+                            raise ChatError("generation_timeout", "The reply took too long and was stopped.", 504)
+                        line = line.strip()
+                        if not line or line.startswith(":") or not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            obj = json.loads(data)
+                        except ValueError as exc:
+                            raise ChatError("invalid_stream", "NVIDIA sent a stream we couldn't read.", 502,
+                                            "bad json event") from exc
+                        if isinstance(obj, dict) and obj.get("error"):
+                            raise ChatError("provider_error", "NVIDIA couldn't finish the reply.", 502,
+                                            "error event in stream")
+                        usage = obj.get("usage") if isinstance(obj, dict) else None
+                        if isinstance(usage, dict):
+                            meta.prompt_tokens = usage.get("prompt_tokens", meta.prompt_tokens)
+                            meta.completion_tokens = usage.get("completion_tokens", meta.completion_tokens)
+                        choices = obj.get("choices") if isinstance(obj, dict) else None
+                        if not choices:
+                            continue
+                        choice = choices[0]
+                        delta = choice.get("delta") or {}
+                        for key in ("reasoning_content", "reasoning"):
+                            if isinstance(delta.get(key), str):
+                                meta.thinking_chars += len(delta[key])     # counted, never shown or stored
+                        text = delta.get("content")
+                        if isinstance(text, str) and text:
+                            text = think.feed(text)
+                            if text:
+                                if not got_text:
+                                    meta.first_token_ms = int((time.monotonic() - started) * 1000)
+                                    got_text = True
+                                yield "delta", text
+                        if choice.get("finish_reason"):
+                            meta.finish_reason = "length" if choice["finish_reason"] == "length" else "stop"
+                    tail = think.flush()
+                    if tail:
+                        if not got_text:
+                            meta.first_token_ms = int((time.monotonic() - started) * 1000)
+                        yield "delta", tail
+        except httpx.ConnectTimeout as exc:
+            raise ChatError("provider_unreachable", "Couldn't reach NVIDIA in time. Check the network connection.",
+                            504) from exc
+        except httpx.ReadTimeout as exc:
+            code = "generation_timeout" if got_text else "first_token_timeout"
+            raise ChatError(code, "NVIDIA took too long to answer." if not got_text
+                            else "The reply stalled and was stopped.", 504) from exc
+        except httpx.TimeoutException as exc:
+            raise ChatError("first_token_timeout", "NVIDIA took too long to answer.", 504) from exc
+        except httpx.ConnectError as exc:
+            raise ChatError("provider_unreachable", "Couldn't reach NVIDIA. Check the network connection.",
+                            503) from exc
+        except httpx.HTTPError as exc:
+            raise ChatError("interrupted", "The connection to NVIDIA was interrupted.", 502) from exc
+        meta.duration_ms = int((time.monotonic() - started) * 1000)
+        if meta.finish_reason is None:
+            meta.finish_reason = "stop"
+        yield "meta", meta
+
+
 class MockChatProvider:
-    """Sample generator for development only (AI_PROVIDER=mock; refused in production). Its replies are labelled as
+    """Sample generator for development only (CHAT_PROVIDER=mock; refused in production). Its replies are labelled as
     samples everywhere; it is never used as a fallback for a real provider."""
 
     provider = "mock"
     model = "sample-fixture"
     configured = True
+    exclusive = False
 
     async def stream(self, messages: list[ChatMessage]) -> AsyncIterator[ChatItem]:
-        for piece in ("[Sample reply: ", "no AI model was used.] ", "Switch AI_PROVIDER to ollama for real replies."):
+        for piece in ("[Sample reply: ", "no AI model was used.] ", "Set CHAT_PROVIDER=nvidia for real replies."):
             await asyncio.sleep(0)
             yield "delta", piece
         yield "meta", StreamMeta(finish_reason="stop", first_token_ms=0, duration_ms=0)
@@ -266,7 +401,19 @@ class UnavailableChat:
 
 
 def build_chat_provider(s: Settings) -> ChatProvider | UnavailableChat:
-    p = active_provider(s)
+    p = active_chat_provider(s)
+    if p == "nvidia":
+        if not s.nvidia_api_key.strip():
+            return UnavailableChat("not_configured", "NVIDIA chat needs an API key. Set NVIDIA_API_KEY in the backend "
+                                   ".env (create one at build.nvidia.com), then restart the server.", p)
+        if not s.nvidia_chat_model.strip():
+            return UnavailableChat("not_configured", "No NVIDIA chat model is set. Set NVIDIA_CHAT_MODEL.", p)
+        if not s.nvidia_base_url.strip().startswith("https://"):
+            return UnavailableChat("not_configured", "NVIDIA_BASE_URL must be an https:// address.", p)
+        return NvidiaChatProvider(
+            s.nvidia_base_url, s.nvidia_chat_model.strip(), s.nvidia_api_key.strip(),
+            max_output_tokens=s.chat_max_output_tokens, first_token_timeout=s.chat_first_token_timeout_seconds,
+            total_timeout=s.chat_total_timeout_seconds, temperature=s.chat_temperature)
     if p == "ollama":
         if not s.ollama_character_model:
             return UnavailableChat("not_configured", "No local model is set. Choose one in OLLAMA_CHARACTER_MODEL.", p)
@@ -277,12 +424,7 @@ def build_chat_provider(s: Settings) -> ChatProvider | UnavailableChat:
             keep_alive=s.chat_keep_alive, allowed=ollama_endpoint_ok(s))
     if p == "mock":
         return MockChatProvider()
-    if p == "nvidia":
-        return UnavailableChat("chat_provider_unsupported", "Chat is switched off for the NVIDIA trial endpoint: it is "
-                               "for fictional test data only and personal conversations must not be sent to it.", p)
-    if p == "openai":
-        return UnavailableChat("chat_provider_unsupported", "Chat on the paid OpenAI provider is not enabled yet.", p)
-    return UnavailableChat("ai_off", "No AI provider is selected, so chat is off.", "")
+    return UnavailableChat("ai_off", "No chat provider is selected (CHAT_PROVIDER), so chat is off.", "")
 
 
 # ---- prompt ------------------------------------------------------------------------------------------------------

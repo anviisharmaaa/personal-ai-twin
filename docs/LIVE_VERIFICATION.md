@@ -245,3 +245,34 @@ A flag on a form that really describes something else is a checker bug worth rep
 female character is a real miss. `legacy-female` is the pre-fix baseline (no identity block) and is excluded from the
 pass/fail exit code. The non-binary/unspecified rows count a masculine form as the "masculine default" failure. Paste the
 terminal output or the JSON back; nothing in the file is private (invented characters and messages only).
+
+
+## 12. NVIDIA Nemotron 3 Ultra chat (LIVE; stays UNVERIFIED until you run it)
+
+Madhuora's chat provider is NVIDIA-hosted `nvidia/nemotron-3-ultra-550b-a55b` (hosted **trial** access: NVIDIA's terms,
+availability and rate limits apply; nothing here creates a paid deployment). **Every NVIDIA test in the automated suites
+is mocked (`httpx.MockTransport`) and proves nothing about the real service.** Only the command below talks to NVIDIA.
+
+1. Create your own key at build.nvidia.com. Put it in `backend/.env` only (never in chat, a frontend variable, Git or a log):
+   ```
+   CHAT_PROVIDER=nvidia
+   NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
+   NVIDIA_CHAT_MODEL=nvidia/nemotron-3-ultra-550b-a55b
+   NVIDIA_API_KEY=<your key>
+   CHAT_MAX_OUTPUT_TOKENS=128
+   ```
+2. Run (synthetic data only; the script never touches your database or real characters):
+   ```
+   cd backend && source .venv/bin/activate   # or your Windows equivalent
+   python -m scripts.live_nvidia_chat_smoke --reps 3 --out nvidia_smoke.json
+   ```
+   It checks: 1 authentication; 2 short English reply; 3 Hindi/Hinglish reply; 4 feminine self-reference (female
+   character); 5 masculine (male); 6 non-binary and unspecified (no arbitrary masculine default); 7 honest answer to
+   "are you an AI?"; 8 short empathetic reply to a fictional disclosure; 9 genuinely streamed output (several SSE deltas)
+   and complete assistant-message persistence through the real chat route (in-memory fake store); 10 HTTP 401 (live,
+   with a deliberately invalid key), and 429/5xx (SIMULATED transport; those cannot be forced on demand, so they are
+   labelled as not NVIDIA evidence). Read the printed replies yourself: the grammar checker is an aid. `INCONCLUSIVE`
+   means no gendered form appeared to judge; it does not fail the run.
+3. Restart the backend, **agree to the new consent wording** in Settings (the consent version changed), then chat in the browser.
+4. Local rollback, if you ever want it: `CHAT_PROVIDER=ollama` (plus `OLLAMA_CHARACTER_MODEL`). It is a deliberate switch,
+   never an automatic fallback.

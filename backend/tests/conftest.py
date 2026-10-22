@@ -36,6 +36,8 @@ def isolated_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setitem(Settings.model_config, "env_file", None)
     for name in Settings.model_fields:
         monkeypatch.delenv(name.upper(), raising=False)
+    # Chat defaults to NVIDIA in production config; mocked tests start with chat OFF and opt in explicitly.
+    monkeypatch.setenv("CHAT_PROVIDER", "")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

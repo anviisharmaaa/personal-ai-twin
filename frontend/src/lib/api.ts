@@ -141,5 +141,5 @@ export type Me = {
   twin: Twin | null;
   character: CharacterState | null;
   completed_steps: string[];
-  ai_consent: { granted: boolean; version: string | null; current_version: string; provider: ProviderInfo };
+  ai_consent: { granted: boolean; version: string | null; current_version: string; provider: ProviderInfo; chat_provider?: ProviderInfo };
 };

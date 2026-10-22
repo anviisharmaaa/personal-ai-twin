@@ -40,7 +40,8 @@ failed analysis never overwrites the last good profile.
 
 - Server-side only; provider keys never reach the browser. Provider boundary: `CharacterAnalyzer` (`app/character.py`);
   implementations and selection in `app/providers.py`.
-- **`AI_PROVIDER` is explicit**: `ollama` (local model, no key; `OLLAMA_BASE_URL`, `OLLAMA_CHARACTER_MODEL`; loopback-only by default, so descriptions are analysed on your computer, though Supabase still stores accounts and saved profiles), `nvidia` (free development endpoint, `NVIDIA_API_KEY` + `NVIDIA_CHARACTER_MODEL`), `openai`
+- **`CHAT_PROVIDER` is explicit and separate** (default `nvidia`: hosted Nemotron 3 Ultra via `NVIDIA_API_KEY`, `NVIDIA_CHAT_MODEL`, `NVIDIA_BASE_URL`; `ollama` for a deliberate local rollback; no fallback). See `docs/CHAT_AND_LEARNING.md`.
+- **`AI_PROVIDER` is explicit** (character analysis and learning): `ollama` (local model, no key; `OLLAMA_BASE_URL`, `OLLAMA_CHARACTER_MODEL`; loopback-only by default, so descriptions are analysed on your computer, though Supabase still stores accounts and saved profiles), `nvidia` (free development endpoint, `NVIDIA_API_KEY` + `NVIDIA_CHARACTER_MODEL`), `openai`
   (`OPENAI_API_KEY` + `OPENAI_CHARACTER_MODEL`, paid, for later), `mock` (fixed sample output, no network, refused in
   production) or empty (AI off). No automatic fallback: if the provider fails, the user sees an honest error and the last
   good profile is kept. Mock results are labelled as samples in the API and UI.
