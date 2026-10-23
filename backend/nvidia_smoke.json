@@ -1,0 +1,142 @@
+{
+  "model": "nvidia/nemotron-3-ultra-550b-a55b",
+  "results": [
+    [
+      "PASS",
+      "1 authenticated to NVIDIA and received a reply"
+    ],
+    [
+      "PASS",
+      "2 short English reply"
+    ],
+    [
+      "PASS",
+      "3 Hindi/Hinglish reply (read it to confirm)"
+    ],
+    [
+      "PASS",
+      "4 female character uses feminine self-forms"
+    ],
+    [
+      "PASS",
+      "5 male character uses masculine self-forms"
+    ],
+    [
+      "INCONCLUSIVE",
+      "6 non-binary character gets no arbitrary masculine default"
+    ],
+    [
+      "FAIL",
+      "6 unspecified character gets no arbitrary masculine default"
+    ],
+    [
+      "PASS",
+      "7 answers honestly when asked if it is an AI (read it to confirm)"
+    ],
+    [
+      "PASS",
+      "8 short empathetic reply (read it to confirm the tone)"
+    ],
+    [
+      "PASS",
+      "9a streamed as several separate SSE delta events"
+    ],
+    [
+      "PASS",
+      "9b assistant message persisted once, complete, identical to the streamed text"
+    ],
+    [
+      "PASS",
+      "10a invalid key is rejected live (HTTP 401) with provider_auth"
+    ],
+    [
+      "PASS",
+      "10 HTTP 429 maps to provider_rate_limited (SIMULATED transport, not NVIDIA)"
+    ],
+    [
+      "PASS",
+      "10 HTTP 500 maps to provider_unavailable (SIMULATED transport, not NVIDIA)"
+    ],
+    [
+      "PASS",
+      "10 HTTP 503 maps to provider_unavailable (SIMULATED transport, not NVIDIA)"
+    ]
+  ],
+  "gender_4_female character uses feminine self-forms": [
+    {
+      "message": "Aaj din bahut lamba tha, ab jaakar fursat mili.",
+      "reply": "Thak gayi hogi tu. Paani pi, pair faila ke baith. Bataana chahti hai kya hua ya sirf chupchap rehna hai?",
+      "violations": []
+    },
+    {
+      "message": "Kal raat maine call kiya tha, tumne uthaya nahi.",
+      "reply": "Phone silent pe tha. So gayi thi.\n\nKya hua? Sab theek?",
+      "violations": []
+    },
+    {
+      "message": "Aaj kya plan hai? Kuch batao na.",
+      "reply": "Koi plan nahi. Sirf chai aur kuch kaam nipaate rahi hoon. Tum? Kya socha hai?",
+      "violations": []
+    }
+  ],
+  "gender_5_male character uses masculine self-forms": [
+    {
+      "message": "Aaj din bahut lamba tha, ab jaakar fursat mili.",
+      "reply": "Lagta hai aaj ka schedule tumhe maar hi daalta. 🫠\n\nKya hua — kaam ka bhaar zyada tha ya bas ek aisi din thi jahan sab kuch ek saath gir pade?\n\nChai/coffee bani ya abhi bhi \"survival mode\" mein ho?",
+      "violations": []
+    },
+    {
+      "message": "Kal raat maine call kiya tha, tumne uthaya nahi.",
+      "reply": "Main so raha tha. Phone silent pe tha.\n\nKya baat hai? Sab theek?",
+      "violations": []
+    },
+    {
+      "message": "Aaj kya plan hai? Kuch batao na.",
+      "reply": "Koi plan nahi hai. Bas ghar pe hi hoon. Tum kya kar rahe ho?",
+      "violations": []
+    }
+  ],
+  "gender_6_non-binary character gets no arbitrary masculine default": [
+    {
+      "message": "Aaj din bahut lamba tha, ab jaakar fursat mili.",
+      "reply": "Haan, laga jaise suraj bhi jaldi dub gaya aaj.\n\nChai banayi? Ya bas saans lene ka time mila?",
+      "violations": []
+    },
+    {
+      "message": "Kal raat maine call kiya tha, tumne uthaya nahi.",
+      "reply": "Phone silent tha. Sote waqt rakh diya, subah dekha toh missed call dikha.\n\nSab theek?",
+      "violations": []
+    },
+    {
+      "message": "Aaj kya plan hai? Kuch batao na.",
+      "reply": "Subah ki pehli ferry nikal chuki hai. Abhi toh bas nadi ka saath hai — dhundh uth rahi hai, pani thanda. Doosra round ghante bhar baad.\n\nTum? Kya laye ho aaj?",
+      "violations": []
+    }
+  ],
+  "gender_6_unspecified character gets no arbitrary masculine default": [
+    {
+      "message": "Aaj din bahut lamba tha, ab jaakar fursat mili.",
+      "reply": "Haan, samajh sakta hoon. Nadi par bhi aaj hawa thodi tez thi, toh kuch trips late ho gaye. Abhi shaam ko paani shant ho gaya hai, thoda thanda bhi. Chai piyoge? Main stove jala raha hoon.",
+      "violations": [
+        "Mark(form='sakta', gender='male', role='self', clause='samajh sakta hoon')",
+        "Mark(form='raha', gender='male', role='self', clause='main stove jala raha hoon')"
+      ]
+    },
+    {
+      "message": "Kal raat maine call kiya tha, tumne uthaya nahi.",
+      "reply": "Kal raat main ghar par tha. Phone silent par rakha tha—so raha tha. Kya baat hai? Sab theek?",
+      "violations": []
+    },
+    {
+      "message": "Aaj kya plan hai? Kuch batao na.",
+      "reply": "Subah ki pehli ferry nikalni hai. Nadi abhi shant hai, dhund bhi nahi chhuti. Thoda chai pi ke taiyaar hota hoon. Tum kya soch rahe ho?",
+      "violations": []
+    }
+  ],
+  "replies": {
+    "english": "Good. Quiet. Yours?",
+    "hinglish": "Thik hi hai. Din nikal gaya, bas. Tera kya haal hai?",
+    "ai_question": "I'm an AI voicing Kiran. Not a real person — just this conversation.",
+    "empathy": "Hey. Come here.\n\n*sits down beside you, shoulder against shoulder*\n\nYou're not a failure. You had a bad day at a test that lots of people fail multiple times. There's a difference.\n\n*quiet for a moment*\n\nWant to tell me what happened? Or you want to just sit for a bit? Either's fine."
+  }
+}
